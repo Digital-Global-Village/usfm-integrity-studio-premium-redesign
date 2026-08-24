@@ -63,9 +63,9 @@
       },
       "Tmds.DBus.Protocol": {
         "type": "Direct",
-        "requested": "[0.21.3, )",
-        "resolved": "0.21.3",
-        "contentHash": "hDwB8WsQoyALQKqIbwzS68UKdlnafDm4T/DkO/JrA/YIneP/rKv96SxYPVXeh3FP4i/SXfShrYftKLtciJAIlw=="
+        "requested": "[0.95.0, )",
+        "resolved": "0.95.0",
+        "contentHash": "qsC7o0FVMB/j+3Zt0ppoORlpWticKsHMN5NFG6egiUz3yYspqiV/3TxSK9iuitg1w6IYbMcwelPkLgeE8T074w=="
       },
       "Avalonia.Angle.Windows.Natives": {
         "type": "Transitive",
