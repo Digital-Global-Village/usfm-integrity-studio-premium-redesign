@@ -9,7 +9,7 @@ on:
       version:
         description: Version to validate without publishing
         required: true
-        default: 0.1.0
+        default: 0.2.0
         type: string
 
 permissions:
@@ -166,8 +166,8 @@ jobs:
           Architecture: amd64
           Installed-Size: $installed_size
           Depends: libx11-6, libxrandr2, libxi6, libice6, libsm6, libfontconfig1
-          Maintainer: Digital Global Village <33775442+salmon84@users.noreply.github.com>
-          Homepage: https://github.com/salmon84/usfm-integrity-studio-premium-redesign
+          Maintainer: Digital Global Village <Digital-Global-Village@users.noreply.github.com>
+          Homepage: https://github.com/Digital-Global-Village/usfm-integrity-studio-premium-redesign
           Description: Offline scripture conversion and repair workspace
            Scan and standardize DOCX scripture, produce USFM and BTTW project
            packages, and clean existing USFM or BTTW project files.
