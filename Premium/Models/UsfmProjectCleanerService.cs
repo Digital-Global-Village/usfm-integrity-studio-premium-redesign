@@ -115,7 +115,11 @@ public static class UsfmProjectCleanerService
         @"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    public static UsfmCleanResult Clean(string inputPath, string outputPath, CanonProfile canonProfile = CanonProfile.ProtestantOt)
+    public static UsfmCleanResult Clean(
+        string inputPath,
+        string outputPath,
+        CanonProfile canonProfile = CanonProfile.ProtestantOt,
+        string? sourceTextRoot = null)
     {
         var input = Path.GetFullPath(inputPath);
         var output = Path.GetFullPath(outputPath);
@@ -123,13 +127,17 @@ public static class UsfmProjectCleanerService
 
         return extension switch
         {
-            ".tstudio" => CleanTstudio(input, output, canonProfile),
+            ".tstudio" => CleanTstudio(input, output, canonProfile, sourceTextRoot: sourceTextRoot),
             ".usfm" or ".txt" => CleanTextFile(input, output),
             _ => throw new InvalidOperationException("Unsupported cleaner input. Select a .usfm, .txt, or .tstudio file.")
         };
     }
 
-    public static UsfmCleanResult CleanTstudioToUsfm(string inputPath, string outputPath, CanonProfile canonProfile = CanonProfile.ProtestantOt)
+    public static UsfmCleanResult CleanTstudioToUsfm(
+        string inputPath,
+        string outputPath,
+        CanonProfile canonProfile = CanonProfile.ProtestantOt,
+        string? sourceTextRoot = null)
     {
         var input = Path.GetFullPath(inputPath);
         var output = Path.GetFullPath(outputPath);
@@ -138,7 +146,7 @@ public static class UsfmProjectCleanerService
             throw new InvalidOperationException("USFM export requires a .tstudio input project.");
         }
 
-        return CleanTstudio(input, output, canonProfile, exportUsfm: true);
+        return CleanTstudio(input, output, canonProfile, exportUsfm: true, sourceTextRoot);
     }
 
     private static UsfmCleanResult CleanTextFile(string inputPath, string outputPath)
@@ -161,7 +169,12 @@ public static class UsfmProjectCleanerService
         return result;
     }
 
-    private static UsfmCleanResult CleanTstudio(string inputPath, string outputPath, CanonProfile canonProfile, bool exportUsfm = false)
+    private static UsfmCleanResult CleanTstudio(
+        string inputPath,
+        string outputPath,
+        CanonProfile canonProfile,
+        bool exportUsfm = false,
+        string? sourceTextRoot = null)
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"uis-tstudio-clean-{Guid.NewGuid():N}");
         var stats = new CleanStats();
@@ -173,7 +186,7 @@ public static class UsfmProjectCleanerService
             ZipFile.ExtractToDirectory(inputPath, tempRoot);
             var chunkLayoutWarnings = FindTstudioChunkLayoutWarnings(tempRoot, canonProfile);
             ThrowIfTstudioIsContaminated(tempRoot, canonProfile);
-            var sourceContextsByProjectRoot = LoadSourceContexts(tempRoot);
+            var sourceContextsByProjectRoot = LoadSourceContexts(tempRoot, sourceTextRoot);
 
             foreach (var filePath in Directory.EnumerateFiles(tempRoot, "*", SearchOption.AllDirectories)
                          .Where(IsCleanableTextFile))
@@ -1020,14 +1033,14 @@ public static class UsfmProjectCleanerService
         return int.TryParse(chapterName, out chapter) && int.TryParse(verseName, out startVerse);
     }
 
-    private static IReadOnlyDictionary<string, SourceContext> LoadSourceContexts(string tempRoot)
+    private static IReadOnlyDictionary<string, SourceContext> LoadSourceContexts(string tempRoot, string? sourceTextRoot)
     {
         var contexts = new Dictionary<string, SourceContext>(StringComparer.Ordinal);
         foreach (var projectRoot in EnumerateProjectRoots(tempRoot))
         {
             var manifestPath = Path.Combine(projectRoot, "manifest.json");
             var manifest = ReadManifest(manifestPath);
-            var sourcePath = FindLocalSourceUsfm(manifest.ProjectId);
+            var sourcePath = FindLocalSourceUsfm(manifest.ProjectId, sourceTextRoot);
             if (sourcePath is null)
             {
                 continue;
@@ -1039,11 +1052,12 @@ public static class UsfmProjectCleanerService
         return contexts;
     }
 
-    private static string? FindLocalSourceUsfm(string projectId)
+    private static string? FindLocalSourceUsfm(string projectId, string? sourceTextRoot)
     {
         var bookId = projectId.ToUpperInvariant();
         var candidateRoots = new[]
         {
+            sourceTextRoot,
             Environment.GetEnvironmentVariable("UIS_SOURCE_TEXT_ROOT"),
             Directory.GetCurrentDirectory(),
             AppContext.BaseDirectory
@@ -1055,6 +1069,12 @@ public static class UsfmProjectCleanerService
 
         foreach (var root in candidateRoots)
         {
+            var directMatch = FindSourceUsfmInKnownLayouts(root, bookId);
+            if (directMatch is not null)
+            {
+                return directMatch;
+            }
+
             var current = root;
             for (var i = 0; i < 8 && !string.IsNullOrWhiteSpace(current); i++)
             {
@@ -1070,6 +1090,34 @@ public static class UsfmProjectCleanerService
                 }
 
                 current = Directory.GetParent(current)?.FullName ?? string.Empty;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? FindSourceUsfmInKnownLayouts(string root, string bookId)
+    {
+        var candidateDirectories = new[]
+        {
+            root,
+            Path.Combine(root, "en_ulb"),
+            Path.Combine(root, "Source Text (eng) USFM files", "en_ulb")
+        };
+
+        foreach (var directory in candidateDirectories.Distinct(StringComparer.Ordinal))
+        {
+            if (!Directory.Exists(directory))
+            {
+                continue;
+            }
+
+            var match = Directory.EnumerateFiles(directory, $"*-{bookId}.usfm", SearchOption.TopDirectoryOnly)
+                .Concat(Directory.EnumerateFiles(directory, $"*_{bookId}_*.usfm", SearchOption.TopDirectoryOnly))
+                .FirstOrDefault();
+            if (match is not null)
+            {
+                return match;
             }
         }
 

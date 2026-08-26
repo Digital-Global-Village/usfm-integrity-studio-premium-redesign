@@ -359,6 +359,17 @@
                                             <TextBlock Text="{Binding BttwProjectHint}" Classes="hint" Margin="24,0,0,0"/>
                                         </StackPanel>
                                     </Border>
+
+                                    <StackPanel Spacing="5">
+                                        <TextBlock Classes="label" Text="English source USFM folder (optional)"/>
+                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                            <TextBox Grid.Column="0" Text="{Binding SourceTextRootPath}" IsReadOnly="True"
+                                                     Watermark="Choose an English source-USFM folder for source-aware project cleaning..."/>
+                                            <Button Grid.Column="1" Classes="secondary" Content="Choose folder" Click="BrowseSourceTextRoot_Click"/>
+                                            <Button Grid.Column="2" Classes="secondary" Content="Clear" Click="ClearSourceTextRoot_Click"/>
+                                        </Grid>
+                                        <TextBlock Text="{Binding SourceTextRootHint}" Classes="hint"/>
+                                    </StackPanel>
                                 </StackPanel>
                             </Expander>
                         </StackPanel>

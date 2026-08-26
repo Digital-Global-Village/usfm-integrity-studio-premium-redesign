@@ -31,6 +31,7 @@
   <ItemGroup>
     <Folder Include="Models\" />
     <Compile Include="..\Shared\ScripturePunctuationNormalizer.cs" Link="Shared\ScripturePunctuationNormalizer.cs" />
+    <Content Include="ConverterRuntime\language-profiles\*.json" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets\**" />
     <AssemblyMetadata Include="RepositoryUrl" Value="$(RepositoryUrl)" />
     <AssemblyMetadata Include="SourceRevisionId" Value="$(SourceRevisionId)" />

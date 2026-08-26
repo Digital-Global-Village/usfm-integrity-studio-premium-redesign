@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using System.Xml.Linq;
 using UsfmIntegrityStudio.Models;
 using UsfmTools.Text;
 
@@ -61,6 +62,149 @@ foreach (var test in cases)
     }
 }
 
+var structuralRoot = Path.Combine(Path.GetTempPath(), $"uis-docx-structure-{Guid.NewGuid():N}");
+try
+{
+    Directory.CreateDirectory(structuralRoot);
+    var structuralInput = Path.Combine(structuralRoot, "input.docx");
+    var structuralOutput = Path.Combine(structuralRoot, "standardized.docx");
+    var structuralSecondPass = Path.Combine(structuralRoot, "standardized-second.docx");
+    WriteStructuralDocxFixture(structuralInput);
+    var originalBytes = File.ReadAllBytes(structuralInput);
+
+    InvokeDocxStandardize(appAssembly, structuralInput, structuralOutput);
+    InvokeDocxStandardize(appAssembly, structuralOutput, structuralSecondPass);
+
+    var expectedParagraphs = new[]
+    {
+        "مَتّی کی اِنجِیل",
+        "باب ۱",
+        "1 Verse one.",
+        "2 Verse two.",
+        "باب 12",
+        "1 Verse twelve one.",
+        "2 Verse twelve two.",
+        "باب ۱۳",
+        "1 Verse thirteen one.",
+        "2 Verse thirteen two.",
+        "باب ۱۴",
+        "1 Verse fourteen begins",
+        "continued verse fourteen text",
+        "2 Verse fourteen two.",
+        "باب ۱۵",
+        "17 Verse fifteen seventeen.",
+        "18 Verse fifteen eighteen.",
+        "19 Verse fifteen nineteen.",
+        "باب ۲۳",
+        "37 Verse twenty-three thirty-seven.",
+        "38 Verse twenty-three thirty-eight.",
+        "39 Verse twenty-three thirty-nine.",
+        "باب ۲۸",
+        "1 First verse text.",
+        "2 Second verse text."
+    };
+    var firstPassParagraphs = ReadDocxParagraphs(structuralOutput);
+    var secondPassParagraphs = ReadDocxParagraphs(structuralSecondPass);
+    if (!firstPassParagraphs.SequenceEqual(expectedParagraphs, StringComparer.Ordinal))
+    {
+        failures.Add(
+            "structural DOCX standardization: unexpected paragraphs ["
+            + string.Join(" | ", firstPassParagraphs)
+            + "]");
+    }
+
+    if (!secondPassParagraphs.SequenceEqual(firstPassParagraphs, StringComparer.Ordinal))
+    {
+        failures.Add("structural DOCX standardization: second pass changed paragraph structure or text");
+    }
+
+    using (var standardizedArchive = ZipFile.OpenRead(structuralOutput))
+    {
+        var documentXml = ReadEntry(standardizedArchive, "word/document.xml");
+        if (documentXml.Contains("vertAlign", StringComparison.Ordinal)
+            || documentXml.Contains("۱۔", StringComparison.Ordinal)
+            || documentXml.Contains("۲۔", StringComparison.Ordinal))
+        {
+            failures.Add("structural DOCX standardization: duplicate/superscript verse markers remain");
+        }
+    }
+
+    if (!File.ReadAllBytes(structuralInput).SequenceEqual(originalBytes))
+    {
+        failures.Add("structural DOCX standardization: modified the source DOCX");
+    }
+
+    var conversionOutput = Path.Combine(structuralRoot, "bundled-conversion");
+    Directory.CreateDirectory(conversionOutput);
+    var staleUsfmPath = Path.Combine(conversionOutput, "stale.usfm");
+    File.WriteAllText(staleUsfmPath, "\\id GEN\n\\c 1\n\\v 1 stale\n", new UTF8Encoding(false));
+    var conversion = DocxConversionService.Execute(new DocxConversionRequest(
+        structuralOutput,
+        conversionOutput,
+        Path.Combine(conversionOutput, "conversion-report.txt"),
+        "permissive",
+        "protestant-nt",
+        "urd",
+        ["MAT"],
+        PreserveVerseMarkers: true));
+    if (!conversion.GeneratedOutput || conversion.ExitCode is not (0 or 2))
+    {
+        failures.Add(
+            $"bundled DOCX conversion: expected generated output with exit 0 or 2, got exit {conversion.ExitCode}; stderr [{conversion.StandardError}]");
+    }
+    if (conversion.GeneratedUsfmPaths.Contains(staleUsfmPath, StringComparer.OrdinalIgnoreCase))
+    {
+        failures.Add("bundled DOCX conversion: reported an unchanged stale USFM file as current-run output");
+    }
+
+    var identicalRetry = DocxConversionService.Execute(new DocxConversionRequest(
+        structuralOutput,
+        conversionOutput,
+        Path.Combine(conversionOutput, "conversion-retry-report.txt"),
+        "permissive",
+        "protestant-nt",
+        "urd",
+        ["MAT"],
+        PreserveVerseMarkers: true));
+    if (!identicalRetry.GeneratedOutput || identicalRetry.GeneratedUsfmPaths.Count != 1)
+    {
+        failures.Add("bundled DOCX conversion: an identical retry was incorrectly reported as producing no output");
+    }
+
+    var convertedUsfmPath = conversion.GeneratedUsfmPaths.SingleOrDefault();
+    if (convertedUsfmPath is null)
+    {
+        failures.Add($"bundled DOCX conversion: expected exactly one MAT output, got {conversion.GeneratedUsfmPaths.Count}");
+    }
+    else
+    {
+        var convertedUsfm = File.ReadAllText(convertedUsfmPath);
+        if (!convertedUsfm.Contains("\\id MAT", StringComparison.OrdinalIgnoreCase)
+            || !convertedUsfm.Contains("\\c 1", StringComparison.Ordinal)
+            || !convertedUsfm.Contains("\\v 1 Verse one.", StringComparison.Ordinal)
+            || !convertedUsfm.Contains("\\c 28", StringComparison.Ordinal)
+            || !convertedUsfm.Contains("\\v 2 Second verse text.", StringComparison.Ordinal))
+        {
+            failures.Add($"bundled DOCX conversion: MAT identity, chapter order, or verse anchoring was not preserved; output [{convertedUsfm.Replace(Environment.NewLine, " | ")}]");
+        }
+
+        var convertedPackage = BttwProjectPackageService.PackageUsfm(convertedUsfmPath, "urd");
+        if (!File.Exists(convertedPackage.TstudioPath)
+            || !string.Equals(convertedPackage.ProjectId, "MAT", StringComparison.Ordinal)
+            || convertedPackage.ChapterCount != 7)
+        {
+            failures.Add("bundled DOCX conversion: BTTW project packaging did not preserve the converted MAT structure");
+        }
+    }
+}
+finally
+{
+    if (Directory.Exists(structuralRoot))
+    {
+        Directory.Delete(structuralRoot, recursive: true);
+    }
+}
+
 var tempRoot = Path.Combine(Path.GetTempPath(), $"uis-punctuation-regression-{Guid.NewGuid():N}");
 try
 {
@@ -84,11 +228,27 @@ try
     const string chunkInput = "\\v 28 کہا، “ جب تُم آئے۔ \\v 29 جواب دیا۔ ”";
     const string chunkExpected = "\\v 28 کہا، ”جب تُم آئے۔ \\v 29 جواب دیا۔“";
     File.WriteAllText(Path.Combine(chapterRoot, "28.txt"), chunkInput, new UTF8Encoding(false));
+    File.WriteAllText(Path.Combine(chapterRoot, "30.txt"), "\\v 30 اس نے کہ ’سلام‘۔", new UTF8Encoding(false));
+
+    var explicitSourceRoot = Path.Combine(tempRoot, "configured-source");
+    Directory.CreateDirectory(explicitSourceRoot);
+    File.WriteAllText(
+        Path.Combine(explicitSourceRoot, "44-JHN.usfm"),
+        "\\id JHN\n\\c 8\n\\v 30 He said, \"Hello.\"\n",
+        new UTF8Encoding(false));
 
     var inputProject = Path.Combine(tempRoot, "input.tstudio");
     var outputProject = Path.Combine(tempRoot, "output.tstudio");
     ZipFile.CreateFromDirectory(sourceRoot, inputProject, CompressionLevel.Fastest, includeBaseDirectory: false);
-    UsfmProjectCleanerService.Clean(inputProject, outputProject, CanonProfile.ProtestantNt);
+    var sourceAwareResult = UsfmProjectCleanerService.Clean(
+        inputProject,
+        outputProject,
+        CanonProfile.ProtestantNt,
+        explicitSourceRoot);
+    if (sourceAwareResult.DirectSpeechFixes != 1)
+    {
+        failures.Add($"configured source-USFM folder: expected one source-aware direct-speech fix, got {sourceAwareResult.DirectSpeechFixes}");
+    }
 
     using var cleanedArchive = ZipFile.OpenRead(outputProject);
     var chunkEntry = cleanedArchive.GetEntry("ur_jhn_text_ulb/08/28.txt");
@@ -103,6 +263,22 @@ try
         if (!string.Equals(actual, chunkExpected, StringComparison.Ordinal))
         {
             failures.Add($"tstudio RTL quote spacing: expected [{chunkExpected}] but got [{actual}]");
+        }
+    }
+
+
+    var sourceAwareEntry = cleanedArchive.GetEntry("ur_jhn_text_ulb/08/30.txt");
+    if (sourceAwareEntry is null)
+    {
+        failures.Add("configured source-USFM folder: source-aware chunk is missing");
+    }
+    else
+    {
+        using var reader = new StreamReader(sourceAwareEntry.Open(), Encoding.UTF8);
+        var actual = reader.ReadToEnd();
+        if (actual.Contains("کہ", StringComparison.Ordinal))
+        {
+            failures.Add($"configured source-USFM folder: redundant direct-speech کہ was not removed [{actual}]");
         }
     }
 }
@@ -354,7 +530,146 @@ if (failures.Count > 0)
 }
 
 Console.WriteLine(
-    $"Regression tests passed: build identity metadata, {cases.Length} punctuation cases, quote-cleaning .tstudio, canonical BTTW packaging, partial-chunk mapping, warning-only extra chunk splits, and non-destructive duplicate blocking.");
+    $"Regression tests passed: build identity metadata, {cases.Length} punctuation cases, structural DOCX standardization, bundled DOCX conversion, explicit source-USFM lookup, quote-cleaning .tstudio, canonical BTTW packaging, partial-chunk mapping, warning-only extra chunk splits, and non-destructive duplicate blocking.");
+
+static void InvokeDocxStandardize(Assembly appAssembly, string inputPath, string outputPath)
+{
+    var serviceType = appAssembly.GetType("UsfmIntegrityStudio.Models.DocxScanService")
+        ?? throw new InvalidOperationException("DocxScanService type was not found.");
+    var method = serviceType.GetMethod("Standardize", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("DocxScanService.Standardize was not found.");
+    method.Invoke(
+        null,
+        [
+            inputPath,
+            outputPath,
+            CanonProfile.ProtestantNt,
+            new HashSet<string>(["MAT"], StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            true
+        ]);
+}
+
+static void WriteStructuralDocxFixture(string path)
+{
+    XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    var document = new XDocument(
+        new XElement(
+            w + "document",
+            new XAttribute(XNamespace.Xmlns + "w", w),
+            new XElement(
+                w + "body",
+                Paragraph(w, "مَتّی کی اِنجِیل"),
+                Paragraph(w, "باب ۱"),
+                new XElement(
+                    w + "p",
+                    SuperscriptRun(w, "1"),
+                    Run(w, "\u00A0", preserveSpace: true),
+                    Run(w, "۱"),
+                    Run(w, "۔\u00A0", preserveSpace: true),
+                    Run(w, "Verse one."),
+                    SuperscriptRun(w, "2"),
+                    Run(w, " ۲۔ Verse two.", preserveSpace: true)),
+                new XElement(
+                    w + "p",
+                    new XElement(
+                        w + "r",
+                        Text(w, "باب12"),
+                        new XElement(w + "br"),
+                        Text(w, "1۔ Verse twelve one."),
+                        new XElement(w + "br"),
+                        Text(w, "2 Verse twelve two."))),
+                Paragraph(w, "باب ۱۳"),
+                new XElement(
+                    w + "p",
+                    SuperscriptRun(w, "1"),
+                    Run(w, "Verse thirteen one.")),
+                new XElement(
+                    w + "p",
+                    SuperscriptRun(w, "2"),
+                    Run(w, "Verse thirteen two.")),
+                Paragraph(w, "باب ۱۴"),
+                Paragraph(w, "1 Verse fourteen begins"),
+                Paragraph(w, "continued verse fourteen text"),
+                Paragraph(w, "2 Verse fourteen two."),
+                Paragraph(w, "باب ۱۵"),
+                new XElement(
+                    w + "p",
+                    SuperscriptRun(w, "17"),
+                    Run(w, " ۱۷۔ Verse fifteen seventeen.", preserveSpace: true),
+                    SuperscriptRun(w, "18"),
+                    Run(w, "۸۔ Verse fifteen eighteen."),
+                    SuperscriptRun(w, "19"),
+                    Run(w, " ۱۹۔ Verse fifteen nineteen.", preserveSpace: true)),
+                Paragraph(w, "باب ۲۳"),
+                new XElement(
+                    w + "p",
+                    SuperscriptRun(w, "37"),
+                    Run(w, " ۳۷۔ Verse twenty-three thirty-seven.", preserveSpace: true),
+                    SuperscriptRun(w, "8"),
+                    Run(w, "۳۸۔ Verse twenty-three thirty-eight."),
+                    SuperscriptRun(w, "39"),
+                    Run(w, " ۳۹۔ Verse twenty-three thirty-nine.", preserveSpace: true)),
+                Paragraph(w, "باب ۲۸"),
+                Paragraph(w, string.Empty),
+                new XElement(
+                    w + "p",
+                    new XElement(
+                        w + "r",
+                        Text(w, "First verse text."),
+                        new XElement(w + "br"),
+                        Text(w, "2 Second verse text."))),
+                new XElement(w + "sectPr"))));
+
+    using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
+    var entry = archive.CreateEntry("word/document.xml");
+    using var stream = entry.Open();
+    document.Save(stream);
+}
+
+static XElement Paragraph(XNamespace w, string value)
+{
+    return new XElement(w + "p", Run(w, value));
+}
+
+static XElement SuperscriptRun(XNamespace w, string value)
+{
+    return new XElement(
+        w + "r",
+        new XElement(w + "rPr", new XElement(w + "vertAlign", new XAttribute(w + "val", "superscript"))),
+        Text(w, value));
+}
+
+static XElement Run(XNamespace w, string value, bool preserveSpace = false)
+{
+    return new XElement(w + "r", Text(w, value, preserveSpace));
+}
+
+static XElement Text(XNamespace w, string value, bool preserveSpace = false)
+{
+    var text = new XElement(w + "t", value);
+    if (preserveSpace)
+    {
+        text.SetAttributeValue(XNamespace.Xml + "space", "preserve");
+    }
+
+    return text;
+}
+
+static IReadOnlyList<string> ReadDocxParagraphs(string path)
+{
+    XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    using var archive = ZipFile.OpenRead(path);
+    var entry = archive.GetEntry("word/document.xml")
+        ?? throw new InvalidDataException("Synthetic DOCX is missing word/document.xml.");
+    using var stream = entry.Open();
+    var document = XDocument.Load(stream);
+    return document
+        .Descendants(w + "p")
+        .Select(paragraph => string.Concat(paragraph.Descendants(w + "t").Select(text => text.Value)).Trim())
+        .Where(text => !string.IsNullOrWhiteSpace(text))
+        .ToList();
+}
 
 static void AssertMetadata(
     IReadOnlyDictionary<string, string> metadata,

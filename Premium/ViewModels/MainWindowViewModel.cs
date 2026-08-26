@@ -49,6 +49,9 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool generateBttwProjects = true;
 
     [ObservableProperty]
+    private string sourceTextRootPath = string.Empty;
+
+    [ObservableProperty]
     private string status = "Ready.";
 
     [ObservableProperty]
@@ -117,6 +120,11 @@ public partial class MainWindowViewModel : ViewModelBase
         ? "Enabled: each generated USFM book also gets a BTTW .tstudio project package stamped ts-desktop 1073x."
         : "Disabled: conversion outputs USFM only; use Clean USFM/Project later for existing project files.";
     public string CanonHint => "Canonical checks compare missing/extra chapter-verse markers against the selected OT or NT canon profile.";
+    public string SourceTextRootHint => string.IsNullOrWhiteSpace(SourceTextRootPath)
+        ? "Optional: source-aware direct-speech comparison will be skipped unless a compatible English source folder is found automatically."
+        : Directory.Exists(SourceTextRootPath)
+            ? $"Source-aware project cleaning enabled: {SourceTextRootPath}"
+            : $"Configured source folder was not found: {SourceTextRootPath}";
 
     public string OutputTargetPreview =>
         string.IsNullOrWhiteSpace(OutputFolderPath) || string.IsNullOrWhiteSpace(OutputSetName)
@@ -231,6 +239,11 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(BttwProjectHint));
         OnPropertyChanged(nameof(OutputFormatHint));
+    }
+
+    partial void OnSourceTextRootPathChanged(string value)
+    {
+        OnPropertyChanged(nameof(SourceTextRootHint));
     }
 
     partial void OnIsRunningChanged(bool value)

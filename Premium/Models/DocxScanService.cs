@@ -373,14 +373,24 @@ internal static class DocxScanService
                 var body = xml.Root?.Element(W + "body");
                 if (body is not null)
                 {
+                    var structuralChanges = RestructureExplicitScriptureParagraphs(
+                        body,
+                        canonProfile,
+                        selectedIds,
+                        selectedTitles);
+                    changedParagraphCount += structuralChanges.ChangedParagraphCount;
+                    changedTextNodeCount += structuralChanges.ChangedTextNodeCount;
+
                     string? currentBookId = null;
                     string? currentBookTitle = null;
                     var currentChapter = 0;
                     var currentVerse = 0;
                     var expectedMaxVerse = 0;
                     var previousParagraphWasStandaloneVerseMarker = false;
-                    foreach (var paragraph in body.Elements(W + "p"))
+                    var paragraphs = body.Elements(W + "p").ToList();
+                    for (var paragraphIndex = 0; paragraphIndex < paragraphs.Count; paragraphIndex++)
                     {
+                        var paragraph = paragraphs[paragraphIndex];
                         var paragraphText = NormalizeWhitespace(ExtractText(paragraph)).Trim();
                         if (IsIgnorablePreChapterHeaderLine(paragraphText))
                         {
@@ -424,6 +434,13 @@ internal static class DocxScanService
                         }
 
                         var paragraphChanged = false;
+                        if (TryNormalizeChapterLabel(paragraph))
+                        {
+                            paragraphText = NormalizeWhitespace(ExtractText(paragraph)).Trim();
+                            changedTextNodeCount++;
+                            paragraphChanged = true;
+                        }
+
                         if (TryReadLooseLeadingVerse(paragraphText, out var looseVerse) && looseVerse > 0)
                         {
                             currentVerse = looseVerse;
@@ -447,7 +464,31 @@ internal static class DocxScanService
                             // already belongs to that verse, so do not inject a synthetic next marker.
                             previousParagraphWasStandaloneVerseMarker = false;
                         }
-                        else if (inferMissingVerseMarkers && ShouldInferVerseMarker(paragraphText, currentChapter, currentVerse, expectedMaxVerse))
+                        else if (inferMissingVerseMarkers
+                                 && ShouldInferFirstVerseMarker(
+                                     paragraphText,
+                                     FindNextNonEmptyParagraphText(paragraphs, paragraphIndex + 1),
+                                     currentChapter,
+                                     currentVerse,
+                                     expectedMaxVerse))
+                        {
+                            if (PrefixParagraphWithVerseMarker(paragraph, 1))
+                            {
+                                paragraphText = NormalizeWhitespace(ExtractText(paragraph)).Trim();
+                                currentVerse = 1;
+                                changedTextNodeCount++;
+                                paragraphChanged = true;
+                            }
+
+                            previousParagraphWasStandaloneVerseMarker = false;
+                        }
+                        else if (inferMissingVerseMarkers
+                                 && ShouldInferVerseMarker(
+                                     paragraphText,
+                                     FindPreviousNonEmptyParagraphText(paragraphs, paragraphIndex - 1),
+                                     currentChapter,
+                                     currentVerse,
+                                     expectedMaxVerse))
                         {
                             var inferredVerse = currentVerse + 1;
                             if (PrefixParagraphWithVerseMarker(paragraph, inferredVerse))
@@ -504,7 +545,517 @@ internal static class DocxScanService
             markerIssues.Count);
     }
 
-    private static bool ShouldInferVerseMarker(string paragraphText, int currentChapter, int currentVerse, int expectedMaxVerse)
+    private static StructuralStandardizeChanges RestructureExplicitScriptureParagraphs(
+        XElement body,
+        CanonProfile canonProfile,
+        IReadOnlySet<string> selectedBookIds,
+        IReadOnlySet<string> selectedBookTitles)
+    {
+        var versification = GetVersificationProfile(canonProfile);
+        var filterByBook = selectedBookIds.Count > 0 || selectedBookTitles.Count > 0;
+        string? currentBookId = null;
+        string? currentBookTitle = null;
+        var currentChapter = 0;
+        var changedParagraphs = 0;
+        var changedTextNodes = 0;
+
+        foreach (var paragraph in body.Elements(W + "p").ToList())
+        {
+            var paragraphText = NormalizeWhitespace(ExtractText(paragraph)).Trim();
+            if (TryResolveCanonicalBookTitle(paragraphText, canonProfile, out var resolvedBookId))
+            {
+                currentBookId = resolvedBookId;
+                currentBookTitle = paragraphText;
+                currentChapter = 0;
+            }
+            else if (LooksLikeBookHeadingBoundary(paragraphText))
+            {
+                currentBookId = null;
+                currentBookTitle = paragraphText;
+                currentChapter = 0;
+            }
+
+            var chapterMatch = ChapterRegex.Match(paragraphText);
+            if (chapterMatch.Success
+                && TryParseScriptNumber(chapterMatch.Groups[1].Value, out var parsedChapter)
+                && parsedChapter > 0)
+            {
+                currentChapter = parsedChapter;
+            }
+
+            if (filterByBook
+                && !IsSelectedBook(currentBookId, currentBookTitle, selectedBookIds, selectedBookTitles))
+            {
+                continue;
+            }
+
+            if (!TryRestructureParagraph(
+                    paragraph,
+                    versification,
+                    currentBookId,
+                    currentChapter,
+                    out var replacements,
+                    out var lastChapter,
+                    out var normalizedTextNodes))
+            {
+                continue;
+            }
+
+            paragraph.ReplaceWith(replacements);
+            changedParagraphs++;
+            changedTextNodes += normalizedTextNodes;
+            currentChapter = lastChapter;
+        }
+
+        return new StructuralStandardizeChanges(changedParagraphs, changedTextNodes);
+    }
+
+    private static bool TryRestructureParagraph(
+        XElement paragraph,
+        VersificationProfile versification,
+        string? bookId,
+        int startingChapter,
+        out IReadOnlyList<XElement> replacements,
+        out int lastChapter,
+        out int normalizedTextNodes)
+    {
+        replacements = Array.Empty<XElement>();
+        lastChapter = startingChapter;
+        normalizedTextNodes = 0;
+
+        if (paragraph.Descendants(W + "hyperlink").Any(link => link.Descendants(W + "br").Any()))
+        {
+            return false;
+        }
+
+        var physicalLines = SplitParagraphAtWordBreaks(paragraph);
+        if (physicalLines.Count == 0)
+        {
+            return false;
+        }
+
+        var logicalLines = new List<List<XElement>>();
+        foreach (var physicalLine in physicalLines)
+        {
+            logicalLines.AddRange(SplitMatchingSuperscriptVerseMarkers(physicalLine, out var normalizedCount));
+            normalizedTextNodes += normalizedCount;
+        }
+
+        var groupedParagraphs = new List<List<XElement>>();
+        List<XElement>? currentGroup = null;
+        var effectiveChapter = startingChapter;
+        var expectedMaxVerse = TryGetExpectedVerseCount(versification, bookId, effectiveChapter);
+
+        foreach (var line in logicalLines)
+        {
+            var lineText = NormalizeWhitespace(ExtractText(line)).Trim();
+            if (string.IsNullOrWhiteSpace(lineText))
+            {
+                continue;
+            }
+
+            var startsBoundary = false;
+            var chapterMatch = ChapterRegex.Match(lineText);
+            if (chapterMatch.Success
+                && TryParseScriptNumber(chapterMatch.Groups[1].Value, out var parsedChapter)
+                && parsedChapter > 0)
+            {
+                effectiveChapter = parsedChapter;
+                expectedMaxVerse = TryGetExpectedVerseCount(versification, bookId, effectiveChapter);
+                startsBoundary = true;
+            }
+            else if (effectiveChapter > 0
+                     && TryReadLooseLeadingVerse(lineText, out var verseNumber)
+                     && verseNumber > 0
+                     && (expectedMaxVerse == 0 || verseNumber <= expectedMaxVerse))
+            {
+                startsBoundary = true;
+            }
+
+            if (currentGroup is null || startsBoundary)
+            {
+                currentGroup = line.Select(element => new XElement(element)).ToList();
+                groupedParagraphs.Add(currentGroup);
+            }
+            else
+            {
+                currentGroup.Add(CreateLineBreakRun());
+                currentGroup.AddRange(line.Select(element => new XElement(element)));
+            }
+        }
+
+        lastChapter = effectiveChapter;
+        var structureChanged = groupedParagraphs.Count > 1;
+        if (!structureChanged && normalizedTextNodes == 0)
+        {
+            return false;
+        }
+
+        var paragraphProperties = paragraph.Element(W + "pPr");
+        replacements = groupedParagraphs
+            .Select(group => new XElement(
+                W + "p",
+                paragraph.Attributes(),
+                paragraphProperties is null ? null : new XElement(paragraphProperties),
+                group.Select(element => new XElement(element))))
+            .ToList();
+        return replacements.Count > 0;
+    }
+
+    private static List<List<XElement>> SplitParagraphAtWordBreaks(XElement paragraph)
+    {
+        var lines = new List<List<XElement>>();
+        var current = new List<XElement>();
+
+        foreach (var child in paragraph.Elements().Where(element => element.Name != W + "pPr"))
+        {
+            if (child.Name != W + "r" || !child.Elements(W + "br").Any())
+            {
+                current.Add(new XElement(child));
+                continue;
+            }
+
+            var runProperties = child.Element(W + "rPr");
+            var runContent = new List<XElement>();
+            foreach (var runChild in child.Elements().Where(element => element.Name != W + "rPr"))
+            {
+                if (runChild.Name != W + "br")
+                {
+                    runContent.Add(new XElement(runChild));
+                    continue;
+                }
+
+                AddRunFragment(current, child, runProperties, runContent);
+                runContent.Clear();
+                lines.Add(current);
+                current = new List<XElement>();
+            }
+
+            AddRunFragment(current, child, runProperties, runContent);
+        }
+
+        lines.Add(current);
+        return lines;
+    }
+
+    private static void AddRunFragment(
+        ICollection<XElement> destination,
+        XElement sourceRun,
+        XElement? runProperties,
+        IReadOnlyCollection<XElement> runContent)
+    {
+        if (runContent.Count == 0)
+        {
+            return;
+        }
+
+        destination.Add(new XElement(
+            W + "r",
+            sourceRun.Attributes(),
+            runProperties is null ? null : new XElement(runProperties),
+            runContent.Select(element => new XElement(element))));
+    }
+
+    private static List<List<XElement>> SplitMatchingSuperscriptVerseMarkers(
+        IReadOnlyList<XElement> line,
+        out int normalizedTextNodes)
+    {
+        normalizedTextNodes = 0;
+        var workingLine = line.Select(element => new XElement(element)).ToList();
+        var markerIndexes = new Dictionary<int, int>();
+        var previousVerse = 0;
+        for (var index = 0; index < workingLine.Count; index++)
+        {
+            if (!TryReadMatchingSuperscriptMarker(workingLine, index, out var verseNumber)
+                || verseNumber <= previousVerse)
+            {
+                continue;
+            }
+
+            markerIndexes[index] = verseNumber;
+            previousVerse = verseNumber;
+        }
+
+        if (markerIndexes.Count == 0)
+        {
+            return [workingLine];
+        }
+
+        foreach (var marker in markerIndexes)
+        {
+            normalizedTextNodes += StripMatchingDuplicateMarkerPrefix(
+                workingLine,
+                marker.Key + 1,
+                marker.Value);
+        }
+
+        var segments = new List<List<XElement>>();
+        List<XElement>? current = null;
+        for (var index = 0; index < workingLine.Count; index++)
+        {
+            if (markerIndexes.TryGetValue(index, out var verseNumber))
+            {
+                current = new List<XElement>();
+                segments.Add(current);
+                var markerRun = new XElement(workingLine[index]);
+                NormalizeSuperscriptMarkerRun(markerRun, verseNumber);
+                current.Add(markerRun);
+                normalizedTextNodes++;
+                continue;
+            }
+
+            current ??= new List<XElement>();
+            if (segments.Count == 0)
+            {
+                segments.Add(current);
+            }
+
+            current.Add(new XElement(workingLine[index]));
+        }
+
+        return segments.Where(segment => !string.IsNullOrWhiteSpace(ExtractText(segment))).ToList();
+    }
+
+    private static bool TryReadMatchingSuperscriptMarker(
+        IReadOnlyList<XElement> line,
+        int index,
+        out int verseNumber)
+    {
+        verseNumber = 0;
+        var element = line[index];
+        if (element.Name != W + "r"
+            || element.Element(W + "rPr")?.Element(W + "vertAlign")?.Attribute(W + "val")?.Value != "superscript")
+        {
+            return false;
+        }
+
+        var markerText = string.Concat(element.Descendants(W + "t").Select(text => text.Value)).Trim();
+        if (!TryParseScriptNumber(markerText, out verseNumber) || verseNumber > 200)
+        {
+            return false;
+        }
+
+        var followingText = string.Concat(line.Skip(index + 1).Select(ExtractText));
+        var duplicateMatch = Regex.Match(
+            followingText,
+            @"^\s*(?<n>[0-9\u0660-\u0669\u06F0-\u06F9]{1,3})(?<separator>\s*[۔\.\):\-])?\s*",
+            RegexOptions.CultureInvariant);
+        if (!duplicateMatch.Success
+            || !TryParseScriptNumber(duplicateMatch.Groups["n"].Value, out var duplicateVerse))
+        {
+            return false;
+        }
+
+        if (duplicateVerse == verseNumber)
+        {
+            return true;
+        }
+
+        var duplicateToken = duplicateMatch.Groups["n"].Value;
+        if (!duplicateMatch.Groups["separator"].Success
+            || !duplicateToken.Any(ch => ch is >= '\u0660' and <= '\u0669' or >= '\u06F0' and <= '\u06F9')
+            || !AreDecimalSuffixMarkers(verseNumber, duplicateVerse))
+        {
+            return false;
+        }
+
+        verseNumber = Math.Max(verseNumber, duplicateVerse);
+        return true;
+    }
+
+    private static void NormalizeSuperscriptMarkerRun(XElement run, int verseNumber)
+    {
+        run.Element(W + "rPr")?.Element(W + "vertAlign")?.Remove();
+        var textNode = run.Descendants(W + "t").FirstOrDefault();
+        if (textNode is not null)
+        {
+            textNode.Value = verseNumber.ToString();
+        }
+    }
+
+    private static int StripMatchingDuplicateMarkerPrefix(
+        IReadOnlyList<XElement> elements,
+        int startIndex,
+        int verseNumber)
+    {
+        var textNodes = elements
+            .Skip(startIndex)
+            .SelectMany(element => element.Descendants(W + "t"))
+            .ToList();
+        var combined = string.Concat(textNodes.Select(node => node.Value));
+        var match = Regex.Match(
+            combined,
+            @"^\s*(?<n>[0-9\u0660-\u0669\u06F0-\u06F9]{1,3})(?:\s*[۔\.\):\-])?\s*",
+            RegexOptions.CultureInvariant);
+        if (!match.Success
+            || !TryParseScriptNumber(match.Groups["n"].Value, out var duplicateVerse)
+            || (duplicateVerse != verseNumber && !AreDecimalSuffixMarkers(verseNumber, duplicateVerse)))
+        {
+            return 0;
+        }
+
+        var remaining = match.Length;
+        var changedNodes = 0;
+        foreach (var textNode in textNodes)
+        {
+            if (remaining <= 0)
+            {
+                break;
+            }
+
+            var original = textNode.Value;
+            if (remaining >= original.Length)
+            {
+                if (original.Length > 0)
+                {
+                    textNode.Value = string.Empty;
+                    changedNodes++;
+                }
+
+                remaining -= original.Length;
+                continue;
+            }
+
+            var tail = original[remaining..].TrimStart();
+            textNode.Value = string.IsNullOrEmpty(tail) ? string.Empty : " " + tail;
+            if (!string.IsNullOrEmpty(textNode.Value))
+            {
+                textNode.SetAttributeValue(XNamespace.Xml + "space", "preserve");
+            }
+
+            changedNodes++;
+            remaining = 0;
+        }
+
+        if (remaining != 0)
+        {
+            return 0;
+        }
+
+        var firstContentNode = textNodes.FirstOrDefault(node => !string.IsNullOrWhiteSpace(node.Value));
+        if (firstContentNode is not null && !char.IsWhiteSpace(firstContentNode.Value[0]))
+        {
+            firstContentNode.Value = " " + firstContentNode.Value;
+            firstContentNode.SetAttributeValue(XNamespace.Xml + "space", "preserve");
+            changedNodes++;
+        }
+
+        return changedNodes;
+    }
+
+    private static bool AreDecimalSuffixMarkers(int first, int second)
+    {
+        if (first <= 0 || second <= 0 || first == second)
+        {
+            return false;
+        }
+
+        var firstText = first.ToString();
+        var secondText = second.ToString();
+        return firstText.Length != secondText.Length
+               && (firstText.EndsWith(secondText, StringComparison.Ordinal)
+                   || secondText.EndsWith(firstText, StringComparison.Ordinal));
+    }
+
+    private static XElement CreateLineBreakRun()
+    {
+        return new XElement(W + "r", new XElement(W + "br"));
+    }
+
+    private static string ExtractText(IEnumerable<XElement> elements)
+    {
+        return string.Concat(elements.Select(ExtractText));
+    }
+
+    private static bool TryNormalizeChapterLabel(XElement paragraph)
+    {
+        var paragraphText = NormalizeWhitespace(ExtractText(paragraph)).Trim();
+        var match = Regex.Match(
+            paragraphText,
+            @"^(?<label>باب)\s*(?<n>[0-9\u0660-\u0669\u06F0-\u06F9]+)\s*$",
+            RegexOptions.CultureInvariant);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var firstTextNode = paragraph.Descendants(W + "t").FirstOrDefault();
+        if (firstTextNode is null)
+        {
+            return false;
+        }
+
+        var normalized = $"{match.Groups["label"].Value} {match.Groups["n"].Value}";
+        if (string.Equals(paragraphText, normalized, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        firstTextNode.Value = normalized;
+        foreach (var remainingTextNode in paragraph.Descendants(W + "t").Skip(1))
+        {
+            remainingTextNode.Value = string.Empty;
+        }
+
+        return true;
+    }
+
+    private static bool ShouldInferFirstVerseMarker(
+        string paragraphText,
+        string nextParagraphText,
+        int currentChapter,
+        int currentVerse,
+        int expectedMaxVerse)
+    {
+        if (currentChapter <= 0
+            || currentVerse != 0
+            || expectedMaxVerse < 2
+            || string.IsNullOrWhiteSpace(paragraphText)
+            || ChapterRegex.IsMatch(paragraphText)
+            || VerseLeadRegex.IsMatch(paragraphText)
+            || LooksLikeBookHeadingBoundary(paragraphText)
+            || paragraphText.Length < 3)
+        {
+            return false;
+        }
+
+        return TryReadLooseLeadingVerse(nextParagraphText, out var nextVerse) && nextVerse == 2;
+    }
+
+    private static string FindNextNonEmptyParagraphText(IReadOnlyList<XElement> paragraphs, int startIndex)
+    {
+        for (var index = startIndex; index < paragraphs.Count; index++)
+        {
+            var text = NormalizeWhitespace(ExtractText(paragraphs[index])).Trim();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string FindPreviousNonEmptyParagraphText(IReadOnlyList<XElement> paragraphs, int startIndex)
+    {
+        for (var index = startIndex; index >= 0; index--)
+        {
+            var text = NormalizeWhitespace(ExtractText(paragraphs[index])).Trim();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool ShouldInferVerseMarker(
+        string paragraphText,
+        string previousParagraphText,
+        int currentChapter,
+        int currentVerse,
+        int expectedMaxVerse)
     {
         if (currentChapter <= 0 || currentVerse <= 0)
         {
@@ -536,7 +1087,18 @@ internal static class DocxScanService
             return false;
         }
 
-        return paragraphText.Length >= 3;
+        return paragraphText.Length >= 3 && EndsWithPhraseEndingPunctuation(previousParagraphText);
+    }
+
+    private static bool EndsWithPhraseEndingPunctuation(string text)
+    {
+        var trimmed = text.TrimEnd();
+        while (trimmed.Length > 0 && trimmed[^1] is '\'' or '"' or '\u2019' or '\u201D' or '\u00BB' or ')' or ']' or '}')
+        {
+            trimmed = trimmed[..^1].TrimEnd();
+        }
+
+        return trimmed.Length > 0 && trimmed[^1] is '.' or '\u06D4' or '!' or '?' or '\u061F' or ':' or ';' or '\u061B';
     }
 
     private static bool PrefixParagraphWithVerseMarker(XElement paragraph, int verseNumber)
@@ -561,7 +1123,7 @@ internal static class DocxScanService
 
         var leadingCount = current.Length - trimmed.Length;
         var leading = leadingCount > 0 ? current[..leadingCount] : string.Empty;
-        firstTextNode.Value = $"{leading}{verseNumber}. {trimmed}";
+        firstTextNode.Value = $"{leading}{verseNumber} {trimmed}";
         return true;
     }
 
@@ -1134,6 +1696,12 @@ private static string ExtractText
             return true;
         }
 
+        // Known canonical titles must reach book matching before generic preface filtering.
+        if (!string.IsNullOrWhiteSpace(InferBookId(text)))
+        {
+            return false;
+        }
+
         var normalized = NormalizeForAliasMatch(text);
         if (normalized.Length <= 1)
         {
@@ -1206,7 +1774,9 @@ private static string ExtractText
             return false;
         }
 
-        var firstTextNode = paragraph.Descendants(W + "t").FirstOrDefault();
+        var firstTextNode = paragraph
+            .Descendants(W + "t")
+            .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text.Value));
         if (firstTextNode is null)
         {
             return false;
@@ -1229,14 +1799,40 @@ private static string ExtractText
         }
 
         var tail = match.Groups["tail"].Value;
+        if (string.IsNullOrEmpty(tail))
+        {
+            var rawParagraphText = ExtractText(paragraph).TrimStart();
+            if (rawParagraphText.Length <= trimmed.Length)
+            {
+                return false;
+            }
+
+            var verticalAlignment = firstTextNode.Ancestors(W + "r").FirstOrDefault()?
+                .Element(W + "rPr")?
+                .Element(W + "vertAlign");
+            verticalAlignment?.Remove();
+            if (char.IsWhiteSpace(rawParagraphText[trimmed.Length]))
+            {
+                return verticalAlignment is not null;
+            }
+
+            firstTextNode.Value = $"{leading}{verseNumber} ";
+            firstTextNode.SetAttributeValue(XNamespace.Xml + "space", "preserve");
+            return true;
+        }
+
         // Drop marker separators/artifacts like ".", ")", replacement chars, and extra spaces.
-        tail = Regex.Replace(tail, @"^\s*[\.\)\]:»”\uFFFD\-]*\s*", string.Empty);
+        tail = Regex.Replace(tail, @"^\s*[\.۔\)\]:»”\uFFFD\-]*\s*", string.Empty);
         if (string.IsNullOrWhiteSpace(tail))
         {
             return false;
         }
 
         firstTextNode.Value = $"{leading}{verseNumber} {tail.TrimStart()}";
+        firstTextNode.Ancestors(W + "r").FirstOrDefault()?
+            .Element(W + "rPr")?
+            .Element(W + "vertAlign")?
+            .Remove();
         return !string.Equals(original, firstTextNode.Value, StringComparison.Ordinal);
     }
 
@@ -1424,6 +2020,10 @@ internal sealed class BookScanState
 }
 
 internal sealed record ScanIssue(string Severity, string Code, string Message);
+
+internal sealed record StructuralStandardizeChanges(
+    int ChangedParagraphCount,
+    int ChangedTextNodeCount);
 
 internal sealed record DocxStandardizeResult(
     string OutputPath,

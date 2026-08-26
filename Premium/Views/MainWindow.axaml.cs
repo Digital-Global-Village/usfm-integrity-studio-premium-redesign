@@ -30,6 +30,51 @@ public partial class MainWindow : Window
         InitializeComponent();
     }
 
+    protected override void OnOpened(EventArgs e)
+    {
+        base.OnOpened(e);
+        Vm.SourceTextRootPath = UserSettingsService.Load().SourceTextRootPath;
+    }
+
+    private async void BrowseSourceTextRoot_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Choose English Source USFM Folder",
+            AllowMultiple = false
+        });
+        if (folders.Count == 0)
+        {
+            return;
+        }
+
+        Vm.SourceTextRootPath = folders[0].Path.LocalPath;
+        SaveSourceTextRootSetting();
+    }
+
+    private void ClearSourceTextRoot_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        Vm.SourceTextRootPath = string.Empty;
+        SaveSourceTextRootSetting();
+    }
+
+    private void SaveSourceTextRootSetting()
+    {
+        try
+        {
+            UserSettingsService.Save(new UserSettings(Vm.SourceTextRootPath));
+        }
+        catch (Exception ex)
+        {
+            Vm.Issues.Add(new IssueItem(
+                "Warning",
+                "LOCAL_SETTINGS_SAVE_FAILED",
+                ex.Message,
+                Vm.Issues.Count + 1,
+                "Settings"));
+        }
+    }
+
     private MainWindowViewModel Vm => (MainWindowViewModel)DataContext!;
     private const string CompanyWebsiteUrl = "https://digitalglobalvillage.com/";
     private const string RepositoryUrl = "https://github.com/salmon84/usfm-integrity-studio-premium-redesign";
@@ -409,9 +454,19 @@ public partial class MainWindow : Window
 
         try
         {
+            if (allowProjectOutputChoice && !Directory.Exists(Vm.SourceTextRootPath))
+            {
+                Vm.Issues.Add(new IssueItem(
+                    "Info",
+                    "SOURCE_COMPARISON_AUTOMATIC_ONLY",
+                    "No configured English source-USFM folder is available. Source-aware direct-speech comparison will run only if the app finds a compatible source folder automatically.",
+                    Vm.Issues.Count + 1,
+                    "USFM Cleaner"));
+            }
+
             var result = await Task.Run(() => exportUsfmFromTstudio
-                ? UsfmProjectCleanerService.CleanTstudioToUsfm(inputPath, outputPath, canonProfile)
-                : UsfmProjectCleanerService.Clean(inputPath, outputPath, canonProfile));
+                ? UsfmProjectCleanerService.CleanTstudioToUsfm(inputPath, outputPath, canonProfile, Vm.SourceTextRootPath)
+                : UsfmProjectCleanerService.Clean(inputPath, outputPath, canonProfile, Vm.SourceTextRootPath));
             Vm.ConsoleLog =
                 $"Cleaned output: {result.OutputPath}{Environment.NewLine}" +
                 $"Cleaner report: {result.ReportPath}{Environment.NewLine}" +
@@ -1073,13 +1128,6 @@ public partial class MainWindow : Window
 
         Vm.SelectedBooksLabel = BuildSelectedBooksLabel(selected);
 
-        var converterProjectPath = TryFindConverterProjectPath();
-        if (converterProjectPath is null)
-        {
-            Vm.Status = "Could not locate UsfmContractCli.csproj.";
-            return;
-        }
-
         var outputDir = Path.Combine(Vm.OutputFolderPath, Vm.OutputSetName);
         var reportPath = Path.Combine(outputDir, "conversion-report.txt");
         Directory.CreateDirectory(outputDir);
@@ -1095,70 +1143,50 @@ public partial class MainWindow : Window
             ? string.Join(",", selectedIds.OrderBy(x => x, StringComparer.Ordinal))
             : null;
         var hasMappedSelection = singleMappedBook is not null || multiMappedBooks is not null;
-        var preserveNumberingArg = Vm.PreserveDocxVerseNumbering ? " --preserve-verse-markers" : string.Empty;
-        const string languageProfileArg = " --profile global-starter";
-        var langCodeArg = $" --lang-code {Vm.LanguageCode}";
-        const string resourceIdArg = " --resource-id reg";
-        const string producerTagArg = " --producer-tag uisprem";
-
-        var args = singleMappedBook is not null
-            ? $"run --project \"{converterProjectPath}\" -c Release -- " +
-              $"docx-to-usfm \"{conversionInput.DocxPath}\" \"{outputDir}\" {Vm.RunMode} --split-books --book {singleMappedBook} --canon {MapCanonToCliToken(Vm.SelectedCanon)}{languageProfileArg}{langCodeArg}{resourceIdArg}{producerTagArg}{preserveNumberingArg} --report \"{reportPath}\""
-            : multiMappedBooks is not null
-            ? $"run --project \"{converterProjectPath}\" -c Release -- " +
-              $"docx-to-usfm \"{conversionInput.DocxPath}\" \"{outputDir}\" {Vm.RunMode} --split-books --books {multiMappedBooks} --canon {MapCanonToCliToken(Vm.SelectedCanon)}{languageProfileArg}{langCodeArg}{resourceIdArg}{producerTagArg}{preserveNumberingArg} --report \"{reportPath}\""
-            : $"run --project \"{converterProjectPath}\" -c Release -- " +
-              $"docx-to-usfm \"{conversionInput.DocxPath}\" \"{outputDir}\" {Vm.RunMode} --split-books --canon {MapCanonToCliToken(Vm.SelectedCanon)}{languageProfileArg}{langCodeArg}{resourceIdArg}{producerTagArg}{preserveNumberingArg} --report \"{reportPath}\""
-            ;
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = args,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
+        var conversionRequest = new DocxConversionRequest(
+            conversionInput.DocxPath,
+            outputDir,
+            reportPath,
+            Vm.RunMode,
+            MapCanonToCliToken(Vm.SelectedCanon),
+            Vm.LanguageCode,
+            selectedIds,
+            Vm.PreserveDocxVerseNumbering);
 
         try
         {
-            using var process = new Process { StartInfo = psi };
-            process.OutputDataReceived += (_, evt) =>
+            var execution = await Task.Run(() => DocxConversionService.Execute(conversionRequest));
+            var conversionExitCode = execution.ExitCode;
+            var combined = execution.StandardOutput;
+            if (!string.IsNullOrWhiteSpace(execution.StandardError))
             {
-                if (evt.Data is null)
-                {
-                    return;
-                }
-
-                stdout.AppendLine(evt.Data);
-            };
-            process.ErrorDataReceived += (_, evt) =>
-            {
-                if (evt.Data is null)
-                {
-                    return;
-                }
-
-                stderr.AppendLine(evt.Data);
-            };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            await process.WaitForExitAsync();
-
-            var combined = stdout.ToString();
-            if (stderr.Length > 0)
-            {
-                combined += Environment.NewLine + "[stderr]" + Environment.NewLine + stderr;
+                combined += Environment.NewLine + "[stderr]" + Environment.NewLine + execution.StandardError;
             }
 
             Vm.ConsoleLog = combined.Trim();
             ParseIssuesFromLog(Vm.ConsoleLog, Vm);
+
+            if (!execution.GeneratedOutput)
+            {
+                Vm.Status = $"Conversion failed (exit {conversionExitCode}): no new or updated USFM output was created.";
+                Vm.Issues.Add(new IssueItem(
+                    "Error",
+                    "DOCX_CONVERSION_NO_OUTPUT",
+                    $"The bundled converter exited with code {conversionExitCode} without creating or updating a USFM file. Review the conversion log and report: {reportPath}",
+                    Vm.Issues.Count + 1,
+                    "Conversion"));
+                return;
+            }
+
+            if (execution.CompletedWithWarnings)
+            {
+                Vm.Issues.Add(new IssueItem(
+                    "Warning",
+                    "DOCX_CONVERSION_COMPLETED_WITH_WARNINGS",
+                    $"The bundled converter created {execution.GeneratedUsfmPaths.Count} USFM file(s) and reported warnings. Review: {reportPath}",
+                    Vm.Issues.Count + 1,
+                    "Conversion"));
+            }
 
             var compatibilityUpdatedFiles = ApplyCompatibilityProfile(outputDir, Vm.CompatibilityProfile);
             if (compatibilityUpdatedFiles > 0)
@@ -1189,7 +1217,9 @@ public partial class MainWindow : Window
             IReadOnlyList<BttwProjectPackageResult> projectPackages = [];
             if (Vm.GenerateBttwProjects)
             {
-                projectPackages = BttwProjectPackageService.PackageDirectory(outputDir, Vm.LanguageCode);
+                projectPackages = execution.GeneratedUsfmPaths
+                    .Select(path => BttwProjectPackageService.PackageUsfm(path, Vm.LanguageCode))
+                    .ToArray();
                 if (projectPackages.Count > 0)
                 {
                     Vm.Issues.Add(new IssueItem(
@@ -1204,27 +1234,23 @@ public partial class MainWindow : Window
             if (!hasMappedSelection)
             {
                 var filtered = FilterOutputToSelectedBooks(outputDir, selectedIds, selectedTitles);
-                Vm.Status = process.ExitCode == 0
-                    ? $"Done. Kept {filtered.kept} selected book file(s), removed {filtered.removed}. Output: {outputDir}"
-                    : $"Completed with issues (exit {process.ExitCode}). Kept {filtered.kept}, removed {filtered.removed}. Output: {outputDir}";
+                Vm.Status = execution.CompletedWithWarnings
+                    ? $"Done with warnings. Kept {filtered.kept} selected book file(s), removed {filtered.removed}. Output: {outputDir}"
+                    : $"Done. Kept {filtered.kept} selected book file(s), removed {filtered.removed}. Output: {outputDir}";
             }
             else if (multiMappedBooks is not null)
             {
-                var generatedCount = Directory.Exists(outputDir)
-                    ? Directory.GetFiles(outputDir, "*.usfm", SearchOption.TopDirectoryOnly).Length
-                    : 0;
-                Vm.Status = process.ExitCode == 0
-                    ? $"Done. Converted selected books ({multiMappedBooks}). Generated {generatedCount} file(s). Output: {outputDir}"
-                    : $"Completed with issues (exit {process.ExitCode}) for selected books ({multiMappedBooks}). Generated {generatedCount} file(s). Output: {outputDir}";
+                var generatedCount = execution.GeneratedUsfmPaths.Count;
+                Vm.Status = execution.CompletedWithWarnings
+                    ? $"Done with warnings. Converted selected books ({multiMappedBooks}). Generated {generatedCount} file(s). Output: {outputDir}"
+                    : $"Done. Converted selected books ({multiMappedBooks}). Generated {generatedCount} file(s). Output: {outputDir}";
             }
             else
             {
-                var generatedCount = Directory.Exists(outputDir)
-                    ? Directory.GetFiles(outputDir, "*.usfm", SearchOption.TopDirectoryOnly).Length
-                    : 0;
-                Vm.Status = process.ExitCode == 0
-                    ? $"Done. Converted book {singleMappedBook} only. Generated {generatedCount} file(s). Output: {outputDir}"
-                    : $"Completed with issues (exit {process.ExitCode}) for book {singleMappedBook}. Generated {generatedCount} file(s). Output: {outputDir}";
+                var generatedCount = execution.GeneratedUsfmPaths.Count;
+                Vm.Status = execution.CompletedWithWarnings
+                    ? $"Done with warnings. Converted book {singleMappedBook} only. Generated {generatedCount} file(s). Output: {outputDir}"
+                    : $"Done. Converted book {singleMappedBook} only. Generated {generatedCount} file(s). Output: {outputDir}";
             }
 
             var preflightIssues = UsfmPreflightService.ScanDirectory(outputDir);
@@ -1409,24 +1435,6 @@ public partial class MainWindow : Window
             var message = match.Groups["msg"].Value.Trim();
             vm.Issues.Add(new IssueItem(severity, code, message, vm.Issues.Count + 1, "Conversion"));
         }
-    }
-
-    private static string? TryFindConverterProjectPath()
-    {
-        var current = AppContext.BaseDirectory;
-        for (var i = 0; i < 8 && !string.IsNullOrWhiteSpace(current); i++)
-        {
-            var candidate = Path.GetFullPath(Path.Combine(current, "..", "..", "..", "..", "UsfmContractCli", "UsfmContractCli.csproj"));
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-
-            var parent = Directory.GetParent(current);
-            current = parent?.FullName ?? string.Empty;
-        }
-
-        return null;
     }
 
     private EffectiveInputDocx PrepareEffectiveInputDocx(string operationName)

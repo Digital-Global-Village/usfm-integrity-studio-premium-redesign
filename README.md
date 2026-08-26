@@ -17,6 +17,8 @@ explicitly covered by regression tests.
   authoritative.
 - Standardize a new DOCX copy without overwriting the source.
 - Preserve explicit chapter and verse numbering during DOCX-to-USFM conversion.
+- Run DOCX conversion through the bundled converter runtime in packaged builds;
+  an adjacent converter source tree or installed .NET SDK is not required.
 - Generate split USFM files and optional BTTW `.tstudio` project packages.
 - Clean USFM and BTTW project files through separate, clearly labeled actions.
 - Confirm the selected file identity before a cleaning job begins.
@@ -86,14 +88,17 @@ unknown-developer warning. Verify the checksum and source revision shown in
 ## Optional source comparison
 
 Some context-aware quote cleanup can compare a project target with a local
-English source USFM. Set `UIS_SOURCE_TEXT_ROOT` to a directory containing:
+English source USFM. Choose the folder under **Advanced conversion controls**.
+The selection is stored only in local application settings. For unattended
+runs, `UIS_SOURCE_TEXT_ROOT` can instead point to a directory containing:
 
 ```text
 Source Text (eng) USFM files/en_ulb/
 ```
 
-This setting is optional. No personal filesystem path is embedded in the
-source.
+The selected directory may also be the `en_ulb` folder itself or a folder that
+directly contains files such as `44-JHN.usfm`. This setting is optional. No
+personal filesystem path is embedded in the source.
 
 ## Safety model
 

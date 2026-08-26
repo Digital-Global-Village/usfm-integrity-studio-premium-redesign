@@ -14,3 +14,6 @@ AVALONIA_TELEMETRY_OPTOUT=1 dotnet run --project Premium/UsfmIntegrityStudio.csp
 
 See the repository-level `README.md` for features, verification commands,
 safety behavior, optional source comparison, licensing, and trademark terms.
+
+Packaged builds use the converter runtime under `ConverterRuntime/`; they do
+not locate or execute an external `UsfmContractCli.csproj` at runtime.
