@@ -4,7 +4,7 @@
 
 An official build must:
 
-1. be published from the `salmon84/usfm-integrity-studio-premium-redesign`
+1. be published from the `Digital-Global-Village/usfm-integrity-studio-premium-redesign`
    repository's GitHub Releases page;
 2. identify an exact Git tag and source commit;
 3. display the same commit in **About & Verify**;

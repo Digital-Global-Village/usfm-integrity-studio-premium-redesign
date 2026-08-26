@@ -77,7 +77,7 @@ public partial class MainWindow : Window
 
     private MainWindowViewModel Vm => (MainWindowViewModel)DataContext!;
     private const string CompanyWebsiteUrl = "https://digitalglobalvillage.com/";
-    private const string RepositoryUrl = "https://github.com/salmon84/usfm-integrity-studio-premium-redesign";
+    private const string RepositoryUrl = "https://github.com/Digital-Global-Village/usfm-integrity-studio-premium-redesign";
     private const string LicenseUrl = RepositoryUrl + "/blob/main/LICENSE";
 
     private void OpenWebsite_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

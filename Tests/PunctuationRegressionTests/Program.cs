@@ -39,7 +39,7 @@ var appMetadata = appAssembly
     .GetCustomAttributes<AssemblyMetadataAttribute>()
     .GroupBy(item => item.Key, StringComparer.Ordinal)
     .ToDictionary(group => group.Key, group => group.Last().Value ?? string.Empty, StringComparer.Ordinal);
-AssertMetadata(appMetadata, "RepositoryUrl", "https://github.com/salmon84/usfm-integrity-studio-premium-redesign", failures);
+AssertMetadata(appMetadata, "RepositoryUrl", "https://github.com/Digital-Global-Village/usfm-integrity-studio-premium-redesign", failures);
 AssertMetadataPresent(appMetadata, "SourceRevisionId", failures);
 AssertMetadataPresent(appMetadata, "BuildChannel", failures);
 AssertMetadataPresent(appMetadata, "OfficialBuild", failures);
