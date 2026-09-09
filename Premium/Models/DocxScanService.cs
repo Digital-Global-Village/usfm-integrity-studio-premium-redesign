@@ -5,6 +5,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Xml.Linq;
 using UsfmTools.Text;
 
@@ -108,7 +109,8 @@ internal static class DocxScanService
         ["EST"] = [22,23,15,17,14,14,10,17,32,3],
         ["JOB"] = [22,13,26,21,27,30,21,22,35,22,20,25,28,22,35,22,16,21,29,29,34,30,17,25,6,14,23,28,25,31,40,22,33,37,16,33,24,41,30,24,34,17],
         ["PSA"] = [6,12,8,8,12,10,17,9,20,18,7,8,6,7,5,11,15,50,14,9,13,31,6,10,22,12,14,9,11,12,24,11,22,22,28,12,40,22,13,17,13,11,5,26,17,11,9,14,20,23,19,9,6,7,23,13,11,11,17,12,8,12,11,10,13,20,7,35,36,5,24,20,28,23,10,13,20,72,13,19,16,8,18,12,13,17,7,18,52,17,16,15,5,23,11,13,12,9,9,5,8,28,22,35,45,48,43,13,31,7,10,10,9,8,18,19,2,29,176,7,8,9,4,8,5,6,5,6,8,8,3,18,3,3,21,26,9,8,24,13,10,7,12,15,21,10,20,14,9,6],
-        ["PRO"] = [33,22,35,27,23,35,27,36,18,32,31,28,25,35,33,33,28,24,29,30,31,29,35,34,28,28,27,28,27,33,31]
+        ["PRO"] = [33,22,35,27,23,35,27,36,18,32,31,28,25,35,33,33,28,24,29,30,31,29,35,34,28,28,27,28,27,33,31],
+        ["ECC"] = [18,26,22,16,20,12,29,17,18,20,10,14]
     };
 
     private static readonly Dictionary<string, int[]> CommonNtVerseCounts = new(StringComparer.Ordinal)
@@ -154,6 +156,37 @@ internal static class DocxScanService
 
     private static readonly Dictionary<string, int[]> OrthodoxOtVerseCounts = BuildOrthodoxOtVerseCounts();
 
+    private static readonly Lazy<Dictionary<string, string>> ProfileBookAliases = new(() =>
+    {
+        using var stream = typeof(DocxScanService).Assembly.GetManifestResourceStream("UIS.BookAliases.json")
+            ?? throw new InvalidDataException("Bundled book aliases are missing.");
+        using var profile = JsonDocument.Parse(stream);
+        var candidates = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var book in profile.RootElement.GetProperty("bookAliases").EnumerateObject())
+        {
+            foreach (var alias in book.Value.EnumerateArray().Select(value => value.GetString()!).Append(book.Name))
+            {
+                var key = NormalizeForAliasMatch(alias);
+                if (!candidates.TryGetValue(key, out var ids)) candidates[key] = ids = new(StringComparer.Ordinal);
+                ids.Add(book.Name);
+            }
+        }
+        // Ambiguous aliases must not silently choose one book over another.
+        return candidates.Where(pair => pair.Value.Count == 1)
+            .ToDictionary(pair => pair.Key, pair => pair.Value.Single(), StringComparer.Ordinal);
+    });
+
+    private static IEnumerable<(XElement Paragraph, int Number)> ScanLogicalLines(XElement body)
+    {
+        var number = 0;
+        foreach (var paragraph in body.Elements(W + "p"))
+        {
+            number++;
+            foreach (var line in SplitParagraphAtWordBreaks(paragraph))
+                yield return (new XElement(W + "p", line), number);
+        }
+    }
+
     public static DocxScanResult Scan(string docxPath, CanonProfile canonProfile = CanonProfile.ProtestantOt)
     {
         var result = new DocxScanResult
@@ -194,10 +227,10 @@ internal static class DocxScanService
         BookScanState? currentBook = null;
         var detectedBookOrder = new List<string>();
 
-        foreach (var paragraph in body.Elements(W + "p"))
+        result.ParagraphCount = body.Elements(W + "p").Count();
+        foreach (var logicalLine in ScanLogicalLines(body))
         {
-            result.ParagraphCount++;
-
+            var paragraph = logicalLine.Paragraph;
             var text = NormalizeWhitespace(ExtractText(paragraph)).Trim();
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -254,7 +287,8 @@ internal static class DocxScanService
             }
 
             var verseMatch = VerseLeadRegex.Match(text);
-            if (!verseMatch.Success)
+            var looseMarker = TryReadLooseLeadingVerse(text, out var looseVerse);
+            if (!verseMatch.Success && !looseMarker)
             {
                 continue;
             }
@@ -265,19 +299,21 @@ internal static class DocxScanService
                 continue;
             }
 
-            if (!TryParseScriptNumber(verseMatch.Groups[1].Value, out var verse) || verse <= 0)
+            var verse = looseVerse;
+            if (verseMatch.Success) TryParseScriptNumber(verseMatch.Groups[1].Value, out verse);
+            if (verse <= 0)
             {
                 continue;
             }
 
-            currentBook.AddVerse(verse, result.Issues);
+            currentBook.AddVerse(verse, result.Issues, logicalLine.Number);
 
             var embeddedMarkers = ExtractEmbeddedVerseMarkers(text, verse);
             if (embeddedMarkers.Count > 0)
             {
                 foreach (var marker in embeddedMarkers)
                 {
-                    currentBook.AddVerse(marker, result.Issues);
+                    currentBook.AddVerse(marker, result.Issues, logicalLine.Number);
                 }
 
                 result.Issues.Add(new ScanIssue(
@@ -1351,7 +1387,9 @@ internal static class DocxScanService
             or "CANON_CHAPTER_MISSING"
             or "CANON_VERSE_MISSING"
             or "CANON_VERSE_EXTRA"
-            or "CANON_CHAPTER_EXTRA";
+            or "CANON_CHAPTER_EXTRA"
+            or "VERSE_OUT_OF_ORDER"
+            or "VERSE_DUPLICATE";
     }
 
     private static void WriteCanonicalHighlightsReport(
@@ -1443,6 +1481,12 @@ internal static class DocxScanService
             return false;
         }
 
+        if (ProfileBookAliases.Value.TryGetValue(NormalizeForAliasMatch(text), out var exactBookId))
+        {
+            bookId = exactBookId;
+            return GetCanonBookIdSet(canonProfile).Contains(bookId);
+        }
+
         if (text.Contains(',', StringComparison.Ordinal))
         {
             return false;
@@ -1531,6 +1575,8 @@ private static string ExtractText
         {
             return null;
         }
+
+        if (ProfileBookAliases.Value.TryGetValue(NormalizeForAliasMatch(title), out var exactBookId)) return exactBookId;
 
         var t = NormalizeForAliasMatch(title);
 
@@ -1801,6 +1847,28 @@ private static string ExtractText
         var tail = match.Groups["tail"].Value;
         if (string.IsNullOrEmpty(tail))
         {
+            var completeMarker = LooseLeadingVerseRegex.Match(ExtractText(paragraph).TrimStart());
+            var remainingDigits = completeMarker.Success
+                ? completeMarker.Groups["n"].Length - match.Groups["n"].Length
+                : 0;
+            if (remainingDigits > 0)
+            {
+                // Consume only the remaining marker digits, never neighboring verse text.
+                foreach (var node in paragraph.Descendants(W + "t").SkipWhile(node => node != firstTextNode).Skip(1))
+                {
+                    var take = Math.Min(remainingDigits, node.Value.Length);
+                    node.Value = node.Value[take..];
+                    node.SetAttributeValue(XNamespace.Xml + "space", "preserve");
+                    remainingDigits -= take;
+                    if (remainingDigits == 0) break;
+                }
+                firstTextNode.Value = $"{leading}{verseNumber} ";
+                firstTextNode.SetAttributeValue(XNamespace.Xml + "space", "preserve");
+                return true;
+            }
+        }
+        if (string.IsNullOrEmpty(tail))
+        {
             var rawParagraphText = ExtractText(paragraph).TrimStart();
             if (rawParagraphText.Length <= trimmed.Length)
             {
@@ -1946,6 +2014,7 @@ internal sealed class BookScanState
 
     private readonly Dictionary<int, HashSet<int>> _chapterVerses = new();
     private int _currentChapter;
+    private int _previousVerse;
 
     public BookScanState(string title, string? bookId)
     {
@@ -1965,13 +2034,14 @@ internal sealed class BookScanState
         }
 
         _currentChapter = chapter;
+        _previousVerse = 0;
         if (!_chapterVerses.ContainsKey(chapter))
         {
             _chapterVerses[chapter] = [];
         }
     }
 
-    public void AddVerse(int verse, ICollection<ScanIssue> issues)
+    public void AddVerse(int verse, ICollection<ScanIssue> issues, int paragraphNumber = 0)
     {
         if (_currentChapter <= 0)
         {
@@ -1979,6 +2049,12 @@ internal sealed class BookScanState
             return;
         }
 
+        if (_previousVerse > 0 && verse < _previousVerse)
+        {
+            issues.Add(new ScanIssue("Warning", "VERSE_OUT_OF_ORDER",
+                $"{Title} {_currentChapter}:{verse} follows verse {_previousVerse} at paragraph {paragraphNumber}. Text was not reordered."));
+        }
+        _previousVerse = verse;
         var set = _chapterVerses[_currentChapter];
         if (!set.Add(verse))
         {

@@ -508,7 +508,23 @@ public static class UsfmProjectCleanerService
             }
 
             var manifest = ReadManifest(manifestPath);
-            var expectedVerses = TryGetVerseCounts(manifest.ProjectId, canonProfile);
+            var bookId = manifest.ProjectId.ToUpperInvariant();
+            var expectedVerses = TryGetVerseCounts(bookId, canonProfile);
+            var presentChapters = Directory.EnumerateDirectories(projectRoot)
+                .Select(Path.GetFileName)
+                .Where(name => int.TryParse(name, out _))
+                .Select(name => int.Parse(name!))
+                .Distinct()
+                .OrderBy(chapter => chapter)
+                .ToList();
+
+            for (var index = 1; index < presentChapters.Count; index++)
+            {
+                for (var missing = presentChapters[index - 1] + 1; missing < presentChapters[index]; missing++)
+                {
+                    issues.Add($"MISSING_CHAPTER_DIRECTORY: {bookId} chapter {missing} is absent between chapters {presentChapters[index - 1]} and {presentChapters[index]}");
+                }
+            }
 
             foreach (var filePath in Directory.EnumerateFiles(projectRoot, "*.txt", SearchOption.AllDirectories))
             {
@@ -530,14 +546,34 @@ public static class UsfmProjectCleanerService
                     issues.Add($"Bidi control character remains: {relativePath}");
                 }
 
-                if (expectedVerses is not null && TryParseChunkPath(relativePath, out var chapter, out var verse) && IsImpossibleChunk(chapter, verse, expectedVerses))
+                var isChunkPath = TryParseChunkPath(relativePath, out var chapter, out var verse);
+                if (expectedVerses is not null && isChunkPath && IsImpossibleChunk(chapter, verse, expectedVerses))
                 {
                     issues.Add($"Impossible chunk remains: {relativePath}");
                 }
 
-                if (TryParseChunkPath(relativePath, out _, out _))
+                if (isChunkPath)
                 {
                     issues.AddRange(FindTstudioChunkTextIssues(relativePath, text));
+
+                    var verseNumbers = ExtractVerseNumbers(text);
+                    foreach (var duplicateVerse in verseNumbers
+                                 .GroupBy(number => number)
+                                 .Where(group => group.Count() > 1)
+                                 .Select(group => group.Key))
+                    {
+                        issues.Add($"DUPLICATE_VERSE_IN_CHUNK: {bookId} {relativePath} repeats verse {duplicateVerse}");
+                    }
+
+                    if (expectedVerses is not null && chapter >= 1 && chapter <= expectedVerses.Length)
+                    {
+                        foreach (var outOfRangeVerse in verseNumbers
+                                     .Where(number => number < 1 || number > expectedVerses[chapter - 1])
+                                     .Distinct())
+                        {
+                            issues.Add($"VERSE_MARKER_OUT_OF_RANGE: {bookId} {relativePath} contains {chapter}:{outOfRangeVerse}; chapter {chapter} ends at verse {expectedVerses[chapter - 1]}");
+                        }
+                    }
                 }
             }
 
@@ -550,7 +586,7 @@ public static class UsfmProjectCleanerService
             }
         }
 
-        return issues;
+        return issues.Distinct(StringComparer.Ordinal).OrderBy(issue => issue, StringComparer.Ordinal).ToList();
     }
 
     private static IEnumerable<string> FindTstudioChunkTextIssues(string relativePath, string text)

@@ -61,6 +61,7 @@ public static class BttwProjectPackageService
     public static BttwProjectPackageResult PackageUsfm(string usfmPath, string languageCode)
     {
         var parsed = ParseUsfm(usfmPath);
+        ValidateParsedUsfm(parsed);
         var lang = NormalizeLanguageCode(languageCode);
         var projectFolderName = $"{lang}_{parsed.BookId.ToLowerInvariant()}_text_{parsed.ResourceId}";
         var outputPath = Path.Combine(
@@ -268,6 +269,55 @@ public static class BttwProjectPackageService
 
         var projectName = EnglishBookNames.GetValueOrDefault(bookId, bookId);
         return new ParsedUsfm(bookId, title, projectName, resourceId, resourceName, IsLikelyRtl(string.Join('\n', lines)), chapters);
+    }
+
+    private static void ValidateParsedUsfm(ParsedUsfm parsed)
+    {
+        if (parsed.Chapters.Count == 0)
+        {
+            throw new InvalidDataException($"USFM {parsed.BookId} contains no chapter markers.");
+        }
+
+        var duplicateChapter = parsed.Chapters
+            .GroupBy(chapter => chapter.Number)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicateChapter is not null)
+        {
+            throw new InvalidDataException(
+                $"Duplicate chapter marker in {parsed.BookId}: chapter {duplicateChapter.Key}. No project package was created.");
+        }
+
+        var chapterNumbers = parsed.Chapters.Select(chapter => chapter.Number).ToList();
+        for (var index = 1; index < chapterNumbers.Count; index++)
+        {
+            if (chapterNumbers[index] <= chapterNumbers[index - 1])
+            {
+                throw new InvalidDataException(
+                    $"Chapter order is invalid in {parsed.BookId}: chapter {chapterNumbers[index]} follows chapter {chapterNumbers[index - 1]}. No project package was created.");
+            }
+
+        }
+
+        foreach (var chapter in parsed.Chapters)
+        {
+            var duplicateVerse = chapter.Chunks
+                .GroupBy(chunk => chunk.Verse)
+                .FirstOrDefault(group => group.Count() > 1);
+            if (duplicateVerse is not null)
+            {
+                throw new InvalidDataException(
+                    $"Duplicate verse marker in {parsed.BookId} {chapter.Number}:{duplicateVerse.Key}. No project package was created.");
+            }
+
+            for (var index = 1; index < chapter.Chunks.Count; index++)
+            {
+                if (chapter.Chunks[index].Verse < chapter.Chunks[index - 1].Verse)
+                {
+                    throw new InvalidDataException(
+                        $"Verse order is invalid in {parsed.BookId} {chapter.Number}: verse {chapter.Chunks[index].Verse} follows verse {chapter.Chunks[index - 1].Verse}. No project package was created.");
+                }
+            }
+        }
     }
 
     private static IEnumerable<ParsedChunk> SplitVerseChunks(string line)

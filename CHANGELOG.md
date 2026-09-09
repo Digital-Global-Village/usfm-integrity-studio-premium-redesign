@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented here.
 
+## Unreleased
+
+### DOCX detection groundwork
+
+- Recognize exact OT/NT headings and book codes from the bundled converter alias
+  profile; ambiguous normalized aliases do not choose a book automatically.
+- Scan manual Word-break lines and attached explicit verse numbers. Report
+  descending recognized verse markers with paragraph locations without sorting
+  scripture; include duplicate/order warnings in canonical highlight reports.
+- Fix digit duplication when one explicit verse number spans Word text runs.
+- Add 347 profile-heading/code regression checks, sentence negatives, synthetic
+  RTL line/order checks, and an optional private Romans acceptance test selected
+  through UIS_PRIVATE_DOCX. No private document or local path is included.
+- Scope: this is detection groundwork, not completion of the full workflow plan.
+  Manual-selection context, universal before/after preservation checks, expanded
+  session isolation and interactive BTTW round trips remain to be verified.
+  Legacy same-line embedded-marker heuristics and nested Word containers are
+  not replaced in this phase. No release assets were refreshed.
+
+### Added
+
+- Added Ecclesiastes verse-count validation and non-destructive diagnostics for
+  missing chapter directories, repeated verse markers inside a chunk, and verse
+  markers outside the selected chapter's canonical range.
+
+### Fixed
+
+- Reject malformed USFM-to-project packaging when chapter markers are duplicated
+  or out of order, or verse markers are duplicated or out of order. Intentional
+  partial and noncontiguous chapter selections remain supported.
+
 ## 0.2.0 - 2026-08-27
 
 ### Added

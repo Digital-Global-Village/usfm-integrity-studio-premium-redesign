@@ -396,6 +396,58 @@ try
         }
     }
 
+    var validPartialRangePath = Path.Combine(integrityRoot, "ecc-valid-partial.usfm");
+    File.WriteAllText(
+        validPartialRangePath,
+        "\\id ECC Regular\n\\h Ecclesiastes\n\\c 6\n\\v 1 Chapter six.\n\\c 7\n\\v 1 Chapter seven.\n",
+        new UTF8Encoding(false));
+    var validPartialRange = BttwProjectPackageService.PackageUsfm(validPartialRangePath, "und");
+    if (!File.Exists(validPartialRange.TstudioPath))
+    {
+        failures.Add("USFM package validation: rejected a valid contiguous partial chapter range");
+    }
+
+    var noncontiguousSelectionPath = Path.Combine(integrityRoot, "ecc-noncontiguous-selection.usfm");
+    File.WriteAllText(
+        noncontiguousSelectionPath,
+        "\\id ECC Regular\n\\h Ecclesiastes\n\\c 6\n\\v 1 Chapter six.\n\\c 8\n\\v 1 Chapter eight.\n",
+        new UTF8Encoding(false));
+    var noncontiguousSelection = BttwProjectPackageService.PackageUsfm(noncontiguousSelectionPath, "und");
+    if (!File.Exists(noncontiguousSelection.TstudioPath))
+    {
+        failures.Add("USFM package validation: rejected an intentional noncontiguous chapter selection");
+    }
+
+    var duplicateVersePath = Path.Combine(integrityRoot, "ecc-duplicate-verse.usfm");
+    File.WriteAllText(
+        duplicateVersePath,
+        "\\id ECC Regular\n\\h Ecclesiastes\n\\c 6\n\\v 9 First verse nine.\n\\v 9 Second verse nine.\n",
+        new UTF8Encoding(false));
+    AssertPackageRejected(duplicateVersePath, "Duplicate verse marker", failures);
+
+    var eccSource = Path.Combine(integrityRoot, "ecc-structure-source");
+    var eccProject = Path.Combine(eccSource, "mve_ecc_text_reg");
+    Directory.CreateDirectory(Path.Combine(eccProject, "06"));
+    Directory.CreateDirectory(Path.Combine(eccProject, "08"));
+    WriteTestManifest(eccProject, "ECC", "06-09");
+    File.WriteAllText(
+        Path.Combine(eccProject, "06", "09.txt"),
+        @"\v 9 First verse nine. \v 9 Repeated verse nine. \v 13 Misfiled chapter-seven text.",
+        new UTF8Encoding(false));
+    File.WriteAllText(Path.Combine(eccProject, "08", "01.txt"), @"\v 1 Chapter eight.", new UTF8Encoding(false));
+
+    var eccInput = Path.Combine(integrityRoot, "ecc-structure.tstudio");
+    var eccOutput = Path.Combine(integrityRoot, "ecc-structure-cleaned.tstudio");
+    ZipFile.CreateFromDirectory(eccSource, eccInput, CompressionLevel.Fastest, includeBaseDirectory: false);
+    var eccResult = UsfmProjectCleanerService.Clean(eccInput, eccOutput, CanonProfile.ProtestantOt);
+    if (!File.Exists(eccOutput)
+        || !eccResult.VerificationIssues.Any(issue => issue.Contains("MISSING_CHAPTER_DIRECTORY: ECC chapter 7", StringComparison.Ordinal))
+        || !eccResult.VerificationIssues.Any(issue => issue.Contains("DUPLICATE_VERSE_IN_CHUNK: ECC 06/09.txt repeats verse 9", StringComparison.Ordinal))
+        || !eccResult.VerificationIssues.Any(issue => issue.Contains("VERSE_MARKER_OUT_OF_RANGE: ECC 06/09.txt contains 6:13", StringComparison.Ordinal)))
+    {
+        failures.Add("ECC project verification: missing chapter, duplicate marker, or out-of-range marker was not reported without blocking output");
+    }
+
     var contaminatedSource = Path.Combine(integrityRoot, "contaminated-source");
     var contaminatedProject = Path.Combine(contaminatedSource, "ur_2co_text_ulb");
     Directory.CreateDirectory(Path.Combine(contaminatedProject, "01"));
@@ -519,6 +571,9 @@ finally
     }
 }
 
+DocxDetectionTests.Run(appAssembly, failures);
+PrivateDocxAcceptance.Run(appAssembly, failures);
+
 if (failures.Count > 0)
 {
     Console.Error.WriteLine("Punctuation regression test failed:");
@@ -530,7 +585,7 @@ if (failures.Count > 0)
 }
 
 Console.WriteLine(
-    $"Regression tests passed: build identity metadata, {cases.Length} punctuation cases, structural DOCX standardization, bundled DOCX conversion, explicit source-USFM lookup, quote-cleaning .tstudio, canonical BTTW packaging, partial-chunk mapping, warning-only extra chunk splits, and non-destructive duplicate blocking.");
+    $"Regression tests passed: build identity metadata, {cases.Length} punctuation cases, structural DOCX standardization, bundled DOCX conversion, explicit source-USFM lookup, quote-cleaning .tstudio, canonical BTTW packaging, partial-chunk mapping, package integrity guards, ECC structural diagnostics, warning-only extra chunk splits, and non-destructive duplicate blocking.");
 
 static void InvokeDocxStandardize(Assembly appAssembly, string inputPath, string outputPath)
 {
@@ -712,6 +767,22 @@ static void AssertEntryExists(ZipArchive archive, string entryName, ICollection<
     if (archive.GetEntry(entryName) is null)
     {
         failures.Add($"canonical BTTW packaging: missing {entryName}");
+    }
+}
+
+static void AssertPackageRejected(string usfmPath, string expectedMessage, ICollection<string> failures)
+{
+    try
+    {
+        BttwProjectPackageService.PackageUsfm(usfmPath, "und");
+        failures.Add($"USFM package validation: expected rejection containing [{expectedMessage}]");
+    }
+    catch (InvalidDataException ex)
+    {
+        if (!ex.Message.Contains(expectedMessage, StringComparison.Ordinal))
+        {
+            failures.Add($"USFM package validation: expected [{expectedMessage}] but got [{ex.Message}]");
+        }
     }
 }
 
