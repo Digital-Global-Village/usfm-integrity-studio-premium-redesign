@@ -4,6 +4,8 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+## 0.2.1 - 2026-09-09
+
 ### DOCX detection groundwork
 
 - Recognize exact OT/NT headings and book codes from the bundled converter alias
@@ -19,7 +21,7 @@ All notable changes to this project will be documented here.
   Manual-selection context, universal before/after preservation checks, expanded
   session isolation and interactive BTTW round trips remain to be verified.
   Legacy same-line embedded-marker heuristics and nested Word containers are
-  not replaced in this phase. No release assets were refreshed.
+  not replaced in this phase.
 
 ### Added
 
