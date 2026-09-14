@@ -8,7 +8,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifiers>osx-arm64;osx-x64;win-x64;linux-x64</RuntimeIdentifiers>
     <Nullable>enable</Nullable>
-    <Version>0.2.1</Version>
+    <Version>0.2.2</Version>
     <SourceRevisionId Condition="'$(SourceRevisionId)' == ''">development</SourceRevisionId>
     <BuildChannel Condition="'$(BuildChannel)' == ''">development</BuildChannel>
     <OfficialBuild Condition="'$(OfficialBuild)' == ''">false</OfficialBuild>

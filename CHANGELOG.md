@@ -4,6 +4,22 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+## 0.2.2 - 2026-09-14
+
+### Added
+
+- Reject recognized DOCX book-title mismatches and impossible explicit chapter
+  or verse numbers before conversion output is written.
+- Bundle the licensed UBS original-versification limits used by conversion
+  preflight checks.
+
+### Fixed
+
+- Run BTTW project cleaning without cross-thread UI access failures.
+- Clarify DOCX conversion and existing-file repair controls, including readable
+  disabled states and output-destination guidance.
+- Default new sessions to the Protestant NT canon profile.
+
 ## 0.2.1 - 2026-09-09
 
 ### DOCX detection groundwork
