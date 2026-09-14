@@ -12,6 +12,7 @@ using System.Xml.Linq;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using UsfmIntegrityStudio.Models;
 using UsfmIntegrityStudio.ViewModels;
 
@@ -322,7 +323,7 @@ public partial class MainWindow : Window
         Vm.OutputFolderPath = string.Empty;
         Vm.OutputSetName = "output_ui_run";
         Vm.RunMode = "permissive";
-        Vm.SelectedCanon = "Protestant OT";
+        Vm.SelectedCanon = "Protestant NT";
         Vm.CompatibilityProfile = "BTTW legacy compatibility";
         Vm.LimitChapters = false;
         Vm.MaxChaptersPerBook = 150;
@@ -451,10 +452,11 @@ public partial class MainWindow : Window
             ? "Cleaning BTTW project artifacts..."
             : "Cleaning USFM artifacts...";
         var canonProfile = Vm.GetCanonProfile();
+        var sourceTextRootPath = Vm.SourceTextRootPath;
 
         try
         {
-            if (allowProjectOutputChoice && !Directory.Exists(Vm.SourceTextRootPath))
+            if (allowProjectOutputChoice && !Directory.Exists(sourceTextRootPath))
             {
                 Vm.Issues.Add(new IssueItem(
                     "Info",
@@ -465,9 +467,28 @@ public partial class MainWindow : Window
             }
 
             var result = await Task.Run(() => exportUsfmFromTstudio
-                ? UsfmProjectCleanerService.CleanTstudioToUsfm(inputPath, outputPath, canonProfile, Vm.SourceTextRootPath)
-                : UsfmProjectCleanerService.Clean(inputPath, outputPath, canonProfile, Vm.SourceTextRootPath));
-            Vm.ConsoleLog =
+                ? UsfmProjectCleanerService.CleanTstudioToUsfm(inputPath, outputPath, canonProfile, sourceTextRootPath)
+                : UsfmProjectCleanerService.Clean(inputPath, outputPath, canonProfile, sourceTextRootPath));
+            await Dispatcher.UIThread.InvokeAsync(() => ApplyCleanerResult(result));
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                Vm.Status = $"Cleaning failed: {ex.Message}";
+                Vm.ConsoleLog = ex.ToString();
+                Vm.Issues.Add(new IssueItem("Error", "USFM_PROJECT_CLEAN_FAILED", ex.Message, Vm.Issues.Count + 1, "USFM Cleaner"));
+            });
+        }
+        finally
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => Vm.IsRunning = false);
+        }
+    }
+
+    private void ApplyCleanerResult(UsfmCleanResult result)
+    {
+        Vm.ConsoleLog =
                 $"Cleaned output: {result.OutputPath}{Environment.NewLine}" +
                 $"Cleaner report: {result.ReportPath}{Environment.NewLine}" +
                 $"Files scanned: {result.FilesScanned}{Environment.NewLine}" +
@@ -486,34 +507,24 @@ public partial class MainWindow : Window
                 $"Structural chunk files removed: {result.StructuralChunkFilesRemoved}{Environment.NewLine}" +
                 $"Manifest finished_chunks removed: {result.ManifestFinishedChunksRemoved}{Environment.NewLine}" +
                 $"Post-clean verification issues: {result.VerificationIssueCount}";
-            Vm.Status = result.VerificationIssueCount == 0
+        Vm.Status = result.VerificationIssueCount == 0
                 ? $"Cleaning completed and verified. Changed {result.FilesChanged} file(s). Output: {result.OutputPath}"
                 : $"Cleaning completed with {result.VerificationIssueCount} verification issue(s). Review report: {result.ReportPath}";
-            Vm.Issues.Add(new IssueItem(
+        Vm.Issues.Add(new IssueItem(
                 "Info",
                 "USFM_PROJECT_CLEANED",
                 $"Removed {result.InlineDuplicateMarkersRemoved + result.PendingLineDuplicateMarkersRemoved} duplicate visible verse marker artifact(s), normalized {result.VisibleVerseMarkersNormalized} reversed/loose verse marker(s), removed {result.StrayLeadingVerseMarkersRemoved} stray leading verse marker(s), removed {result.ByteOrderMarksRemoved} Unicode BOM marker(s), removed {result.UnsafeControlCharsRemoved} unsafe control character(s), removed {result.StructuralChunkFilesRemoved} impossible chunk file(s), removed {result.ManifestFinishedChunksRemoved} impossible manifest reference(s), converted {result.StraightQuotesConverted} double quote(s), {result.StraightSingleQuotesConverted} single quote(s), repaired {result.DirectionalDoubleQuotesRepaired + result.DirectionalSingleQuotesRepaired + result.UnpairedDoubleQuoteClosersRepaired} directional quote(s), and wrote report: {result.ReportPath}.",
                 Vm.Issues.Count + 1,
                 "USFM Cleaner"));
-            foreach (var warning in result.VerificationIssues.Where(issue =>
-                         issue.StartsWith("WARNING NONCANONICAL_", StringComparison.Ordinal)))
-            {
-                Vm.Issues.Add(new IssueItem(
-                    "Warning",
-                    "BTTW_CHUNK_LAYOUT_WARNING",
-                    warning,
-                    Vm.Issues.Count + 1,
-                    "USFM Cleaner"));
-            }
-        }
-        catch (Exception ex)
+        foreach (var warning in result.VerificationIssues.Where(issue =>
+                     issue.StartsWith("WARNING NONCANONICAL_", StringComparison.Ordinal)))
         {
-            Vm.Status = $"Cleaning failed: {ex.Message}";
-            Vm.Issues.Add(new IssueItem("Error", "USFM_PROJECT_CLEAN_FAILED", ex.Message, Vm.Issues.Count + 1, "USFM Cleaner"));
-        }
-        finally
-        {
-            Vm.IsRunning = false;
+            Vm.Issues.Add(new IssueItem(
+                "Warning",
+                "BTTW_CHUNK_LAYOUT_WARNING",
+                warning,
+                Vm.Issues.Count + 1,
+                "USFM Cleaner"));
         }
     }
 

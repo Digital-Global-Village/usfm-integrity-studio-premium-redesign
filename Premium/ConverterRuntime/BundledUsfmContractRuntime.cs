@@ -292,6 +292,8 @@ internal static class BundledUsfmContractRuntime
 
         var result = DocxToUsfmConverter.Convert(inputDocxPath, mode, canonToken, onlyBookIds, preserveVerseMarkers);
 
+        ValidateSelectedBookVersification(result.Lines, onlyBookIds);
+
         if (result.Lines.Count > 0)
         {
             if (splitBooks)
@@ -598,6 +600,19 @@ internal static class BundledUsfmContractRuntime
                 })
                 .ToList();
 
+            var recognizedBookIds = allSegments
+                .Select(segment => InferBookId(segment.Title))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (segments.Count == 0 && recognizedBookIds.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Selected book {string.Join(", ", onlyBookIds)} does not match the recognized DOCX book " +
+                    $"{string.Join(", ", recognizedBookIds)}. Conversion stopped before writing mislabeled scripture content.");
+            }
+
             if (segments.Count == 0 && allSegments.Count == 1 && onlyBookIds.Count == 1)
             {
                 // Fallback: single-book DOCX with heading text that did not map cleanly.
@@ -641,6 +656,54 @@ internal static class BundledUsfmContractRuntime
         return files;
     }
 
+    static void ValidateSelectedBookVersification(IReadOnlyList<string> lines, IReadOnlySet<string>? onlyBookIds)
+    {
+        if (onlyBookIds is not { Count: 1 } || lines.Count == 0)
+        {
+            return;
+        }
+
+        var selectedBookId = onlyBookIds.First().Trim().ToUpperInvariant();
+        var limitsPath = Path.Combine(AppContext.BaseDirectory, "ConverterRuntime", "versification", "org.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(limitsPath));
+        if (!document.RootElement.GetProperty("maxVerses").TryGetProperty(selectedBookId, out var chapterLimits))
+        {
+            return;
+        }
+
+        var currentChapter = 0;
+        foreach (var line in lines)
+        {
+            var chapterMatch = Regex.Match(line, @"^\s*\\c\s+(\d+)\b", RegexOptions.IgnoreCase);
+            if (chapterMatch.Success)
+            {
+                currentChapter = int.Parse(chapterMatch.Groups[1].Value);
+                if (currentChapter < 1 || currentChapter > chapterLimits.GetArrayLength())
+                {
+                    throw new InvalidOperationException(
+                        $"Selected book {selectedBookId} has no chapter {currentChapter}. Conversion stopped before writing mislabeled scripture content.");
+                }
+            }
+
+            if (currentChapter == 0)
+            {
+                continue;
+            }
+
+            foreach (Match verseMatch in Regex.Matches(line, @"\\v\s+(\d+)(?:\s*[-\u2013]\s*(\d+))?\b", RegexOptions.IgnoreCase))
+            {
+                var lastVerse = int.Parse(verseMatch.Groups[2].Success ? verseMatch.Groups[2].Value : verseMatch.Groups[1].Value);
+                var maxVerse = int.Parse(chapterLimits[currentChapter - 1].GetString()!);
+                if (lastVerse > maxVerse)
+                {
+                    throw new InvalidOperationException(
+                        $"Selected book {selectedBookId} chapter {currentChapter} ends at verse {maxVerse}, but the DOCX contains verse {lastVerse}. " +
+                        "Conversion stopped before writing possibly mislabeled scripture content.");
+                }
+            }
+        }
+    }
+
     static bool TrySelectBookLines(IReadOnlyList<string> lines, string bookId, bool preserveVerseMarkers, out IReadOnlyList<string> selected)
     {
         var segments = SplitIntoBookSegments(lines);
@@ -650,6 +713,19 @@ internal static class BundledUsfmContractRuntime
 
         if (matchingSegments.Count == 0)
         {
+            var recognizedBookIds = segments
+                .Select(segment => InferBookId(segment.Title))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (recognizedBookIds.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Selected book {bookId} does not match the recognized DOCX book " +
+                    $"{string.Join(", ", recognizedBookIds)}. Conversion stopped before writing mislabeled scripture content.");
+            }
+
             var trimmedFallback = TrimToKnownBookBoundaries(lines, bookId).ToList();
             if (trimmedFallback.Count == 0)
             {

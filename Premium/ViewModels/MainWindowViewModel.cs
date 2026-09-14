@@ -28,7 +28,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private string runMode = "permissive";
 
     [ObservableProperty]
-    private string selectedCanon = "Protestant OT";
+    private string selectedCanon = "Protestant NT";
 
     [ObservableProperty]
     private string compatibilityProfile = "BTTW legacy compatibility";

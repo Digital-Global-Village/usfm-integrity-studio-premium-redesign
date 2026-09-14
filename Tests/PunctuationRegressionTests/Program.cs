@@ -157,6 +157,30 @@ try
         failures.Add("bundled DOCX conversion: reported an unchanged stale USFM file as current-run output");
     }
 
+    var mismatchOutput = Path.Combine(structuralRoot, "mismatched-book-conversion");
+    Directory.CreateDirectory(mismatchOutput);
+    try
+    {
+        _ = DocxConversionService.Execute(new DocxConversionRequest(
+            structuralOutput,
+            mismatchOutput,
+            Path.Combine(mismatchOutput, "conversion-report.txt"),
+            "permissive",
+            "protestant-nt",
+            "urd",
+            ["ROM"],
+            PreserveVerseMarkers: true));
+        failures.Add("bundled DOCX conversion: recognized MAT content was relabeled and written as ROM");
+    }
+    catch (InvalidOperationException ex)
+        when (ex.Message.Contains("Conversion stopped before writing", StringComparison.Ordinal))
+    {
+        if (Directory.GetFiles(mismatchOutput, "*.usfm", SearchOption.TopDirectoryOnly).Length != 0)
+        {
+            failures.Add("bundled DOCX conversion: mismatch guard wrote a USFM file before stopping");
+        }
+    }
+
     var identicalRetry = DocxConversionService.Execute(new DocxConversionRequest(
         structuralOutput,
         conversionOutput,

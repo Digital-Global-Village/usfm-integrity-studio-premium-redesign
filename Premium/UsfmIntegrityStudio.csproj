@@ -32,6 +32,7 @@
     <Folder Include="Models\" />
     <Compile Include="..\Shared\ScripturePunctuationNormalizer.cs" Link="Shared\ScripturePunctuationNormalizer.cs" />
     <Content Include="ConverterRuntime\language-profiles\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="ConverterRuntime\versification\*.json" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets\**" />
     <EmbeddedResource Include="ConverterRuntime/language-profiles/global-starter.json" LogicalName="UIS.BookAliases.json" />
     <AssemblyMetadata Include="RepositoryUrl" Value="$(RepositoryUrl)" />

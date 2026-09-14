@@ -8,7 +8,7 @@
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/dgv-logo.png"
         Title="USFM Integrity Studio Premium - Redesign"
-        MinWidth="1160"
+        MinWidth="1120"
         MinHeight="760"
         Width="1360"
         Height="900"
@@ -33,6 +33,8 @@
         <SolidColorBrush x:Key="ActionBlue" Color="#2563B8"/>
         <SolidColorBrush x:Key="ActionAmber" Color="#C56A14"/>
         <SolidColorBrush x:Key="ActionTeal" Color="#08766C"/>
+        <SolidColorBrush x:Key="BlueSoft" Color="#EAF3FF"/>
+        <SolidColorBrush x:Key="TealSoft" Color="#E4F3EF"/>
     </Window.Resources>
 
     <Window.Styles>
@@ -86,6 +88,7 @@
             <Setter Property="BorderThickness" Value="1.5"/>
             <Setter Property="Foreground" Value="#173D69"/>
             <Setter Property="MinHeight" Value="48"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
         </Style>
         <Style Selector="Button.sourceChoice:pointerover">
             <Setter Property="Background" Value="#D8E9FC"/>
@@ -147,6 +150,29 @@
             <Setter Property="BorderBrush" Value="#8ABCA4"/>
             <Setter Property="Foreground" Value="{StaticResource Forest}"/>
             <Setter Property="MinHeight" Value="44"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Padding" Value="14,11"/>
+        </Style>
+        <Style Selector="Button.cleaner:pointerover">
+            <Setter Property="Background" Value="#CDE9DC"/>
+            <Setter Property="BorderBrush" Value="#4D9878"/>
+        </Style>
+        <Style Selector="Button.cleaner:disabled">
+            <Setter Property="Background" Value="#EEF2EF"/>
+            <Setter Property="BorderBrush" Value="#C6CEC9"/>
+            <Setter Property="Foreground" Value="#6F7974"/>
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+        <Style Selector="Border.stepChip">
+            <Setter Property="Width" Value="30"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="CornerRadius" Value="15"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+        </Style>
+        <Style Selector="Border.infoStrip">
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Padding" Value="12"/>
         </Style>
         <Style Selector="TextBox.pathBox">
             <Setter Property="Background" Value="#F8F6F0"/>
@@ -170,9 +196,9 @@
                     </Border>
                 </Button>
 
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
                     <TextBlock Text="USFM Integrity Studio" FontFamily="Georgia" FontSize="27" FontWeight="Bold" Foreground="White"/>
-                    <TextBlock Text="A careful workspace for scripture conversion and repair" Foreground="#CFE5DC"/>
+                    <TextBlock Text="Convert DOCX • clean USFM • repair BTTW projects" Foreground="#CFE5DC"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -195,16 +221,17 @@
         </Border>
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <Grid Margin="20" ColumnDefinitions="210,*,330" RowDefinitions="Auto,Auto" ColumnSpacing="14" RowSpacing="14">
+            <Grid Margin="20" ColumnDefinitions="220,*,350" RowDefinitions="Auto,Auto" ColumnSpacing="14" RowSpacing="14">
                 <Border Grid.Column="0" Grid.RowSpan="2" Classes="card" Background="#E8E3D7" VerticalAlignment="Stretch">
                     <StackPanel Spacing="18">
                         <StackPanel Spacing="4">
-                            <TextBlock Classes="eyebrow" Text="Workflow"/>
-                            <TextBlock Classes="sectionTitle" Text="One clear path" FontSize="19"/>
+                            <TextBlock Classes="eyebrow" Text="Workflow guide"/>
+                            <TextBlock Classes="sectionTitle" Text="Four clear steps" FontSize="19"/>
+                            <TextBlock Text="Follow these steps for DOCX conversion. Existing-file repair uses the dedicated panel on the right." Classes="hint"/>
                         </StackPanel>
 
                         <Grid ColumnDefinitions="34,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="16">
-                            <Border Grid.Row="0" Width="30" Height="30" CornerRadius="15" Background="{StaticResource Forest}" HorizontalAlignment="Left">
+                            <Border Grid.Row="0" Classes="stepChip" Background="{StaticResource Forest}">
                                 <TextBlock Text="1" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold"/>
                             </Border>
                             <StackPanel Grid.Row="0" Grid.Column="1" Spacing="2">
@@ -212,7 +239,7 @@
                                 <TextBlock Text="DOCX, folder, USFM or project" Classes="hint"/>
                             </StackPanel>
 
-                            <Border Grid.Row="1" Width="30" Height="30" CornerRadius="15" Background="#B7B2A7" HorizontalAlignment="Left">
+                            <Border Grid.Row="1" Classes="stepChip" Background="#827E75">
                                 <TextBlock Text="2" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold"/>
                             </Border>
                             <StackPanel Grid.Row="1" Grid.Column="1" Spacing="2">
@@ -220,7 +247,7 @@
                                 <TextBlock Text="Language, canon and compatibility" Classes="hint"/>
                             </StackPanel>
 
-                            <Border Grid.Row="2" Width="30" Height="30" CornerRadius="15" Background="#B7B2A7" HorizontalAlignment="Left">
+                            <Border Grid.Row="2" Classes="stepChip" Background="#827E75">
                                 <TextBlock Text="3" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold"/>
                             </Border>
                             <StackPanel Grid.Row="2" Grid.Column="1" Spacing="2">
@@ -228,7 +255,7 @@
                                 <TextBlock Text="Scan, standardize or convert" Classes="hint"/>
                             </StackPanel>
 
-                            <Border Grid.Row="3" Width="30" Height="30" CornerRadius="15" Background="#B7B2A7" HorizontalAlignment="Left">
+                            <Border Grid.Row="3" Classes="stepChip" Background="#827E75">
                                 <TextBlock Text="4" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold"/>
                             </Border>
                             <StackPanel Grid.Row="3" Grid.Column="1" Spacing="2">
@@ -264,12 +291,18 @@
                             </StackPanel>
 
                             <StackPanel Spacing="7">
-                                <TextBlock Classes="label" Text="Input source"/>
+                                <TextBlock Classes="label" Text="1. Choose what you want to process"/>
                                 <TextBox Classes="pathBox" Text="{Binding InputDocxPath}" Watermark="Select a DOCX file, chapter folder, USFM or BTTW project..." IsReadOnly="True"/>
                                 <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
-                                    <Button Grid.Column="0" Content="DOCX file" Click="BrowseDocx_Click" Classes="sourceChoice"/>
-                                    <Button Grid.Column="1" Content="Chapter folder" Click="BrowseDocxFolder_Click" Classes="sourceChoice"/>
-                                    <Button Grid.Column="2" Content="USFM / Project" Click="BrowseUsfmProject_Click" Classes="sourceChoice"/>
+                                    <Button Grid.Column="0" Click="BrowseDocx_Click" Classes="sourceChoice">
+                                        <StackPanel Spacing="1"><TextBlock Text="Choose DOCX file" FontWeight="Bold"/><TextBlock Text="One Word document" FontSize="10" Opacity="0.8"/></StackPanel>
+                                    </Button>
+                                    <Button Grid.Column="1" Click="BrowseDocxFolder_Click" Classes="sourceChoice">
+                                        <StackPanel Spacing="1"><TextBlock Text="Choose chapter folder" FontWeight="Bold"/><TextBlock Text="Several DOCX files" FontSize="10" Opacity="0.8"/></StackPanel>
+                                    </Button>
+                                    <Button Grid.Column="2" Click="BrowseUsfmProject_Click" Classes="sourceChoice">
+                                        <StackPanel Spacing="1"><TextBlock Text="Choose BTTW's Existing File" FontWeight="Bold"/><TextBlock Text="USFM or .tstudio" FontSize="10" Opacity="0.8"/></StackPanel>
+                                    </Button>
                                 </Grid>
                                 <TextBlock Text="{Binding InputSourceMode}" Foreground="{StaticResource ForestBright}" FontWeight="Bold" FontSize="11"/>
                                 <TextBlock Text="{Binding InputSourceHint}" Classes="hint"/>
@@ -278,14 +311,14 @@
                             <Border Height="1" Background="{StaticResource Line}"/>
 
                             <StackPanel Spacing="7">
-                                <TextBlock Classes="label" Text="Output destination"/>
+                                <TextBlock Classes="label" Text="2. Choose where new files will be saved"/>
                                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                                     <TextBox Grid.Column="0" Classes="pathBox" Text="{Binding OutputFolderPath}" Watermark="Select output folder..." IsReadOnly="True"/>
-                                    <Button Grid.Column="1" Content="Choose folder" Click="BrowseOutputFolder_Click" Classes="secondary"/>
+                                    <Button Grid.Column="1" Content="Choose output folder" Click="BrowseOutputFolder_Click" Classes="secondary"/>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,170" ColumnSpacing="10">
                                     <StackPanel Grid.Column="0" Spacing="5">
-                                        <TextBlock Classes="label" Text="Output set name"/>
+                                        <TextBlock Classes="label" Text="Output folder name"/>
                                         <TextBox Text="{Binding OutputSetName}"/>
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Spacing="5">
@@ -294,6 +327,9 @@
                                     </StackPanel>
                                 </Grid>
                                 <TextBlock Text="{Binding LanguageCodeHint}" Classes="hint"/>
+                                <Border Classes="infoStrip" Background="#F7F5EF" BorderBrush="{StaticResource Line}">
+                                    <TextBlock Text="Your original file is never overwritten. Results are written to the destination shown here." Classes="hint" Foreground="#3E4B46"/>
+                                </Border>
                             </StackPanel>
                         </StackPanel>
                     </Border>
@@ -302,7 +338,7 @@
                         <StackPanel Spacing="14">
                             <StackPanel Spacing="3">
                                 <TextBlock Classes="eyebrow" Text="Configuration"/>
-                                <TextBlock Classes="sectionTitle" Text="Translation profile"/>
+                                <TextBlock Classes="sectionTitle" Text="Confirm processing settings"/>
                             </StackPanel>
 
                             <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
@@ -380,8 +416,8 @@
                     <Border Classes="card" Background="#F8FAFC" BorderBrush="#C7D2DF">
                         <StackPanel Spacing="13">
                             <StackPanel Spacing="3">
-                                <TextBlock Classes="eyebrow" Text="Ready when you are" Foreground="#35658E"/>
-                                <TextBlock Text="Run workspace" FontFamily="Georgia" FontSize="22" FontWeight="Bold" Foreground="{StaticResource Ink}"/>
+                                <TextBlock Classes="eyebrow" Text="DOCX workflow" Foreground="#35658E"/>
+                                <TextBlock Text="Scan, standardize, convert" FontFamily="Georgia" FontSize="22" FontWeight="Bold" Foreground="{StaticResource Ink}"/>
                             </StackPanel>
 
                             <Border Background="#E8F0F7" BorderBrush="#C3D2E0" BorderThickness="1" CornerRadius="10" Padding="12">
@@ -394,34 +430,41 @@
 
                             <TextBlock Text="{Binding StandardizationHint}" Foreground="{StaticResource InkSoft}" FontSize="11" TextWrapping="Wrap"/>
 
-                            <Button Content="1  Scan DOCX integrity" Click="ScanDocx_Click" Classes="actionScan" HorizontalAlignment="Stretch" IsEnabled="{Binding CanScan}"/>
-                            <Button Content="2  Standardize DOCX copy" Click="StandardizeDocx_Click" Classes="actionStandardize" HorizontalAlignment="Stretch"
+                            <Border Classes="infoStrip" Background="#FFF8EB" BorderBrush="#E8C58D">
+                                <TextBlock Text="Buttons activate after their required file and destination are selected. Start with Scan to review the document before conversion." Foreground="#704714" FontSize="11" TextWrapping="Wrap"/>
+                            </Border>
+
+                            <Button Content="1  Scan DOCX and review findings" Click="ScanDocx_Click" Classes="actionScan" HorizontalAlignment="Stretch" IsEnabled="{Binding CanScan}"/>
+                            <Button Content="2  Create standardized DOCX copy" Click="StandardizeDocx_Click" Classes="actionStandardize" HorizontalAlignment="Stretch"
                                     ToolTip.Tip="Creates a standardized DOCX copy with normalized spacing/punctuation and canon highlight reporting."
                                     IsEnabled="{Binding CanScan}"/>
-                            <Button Content="3  Convert DOCX to USFM" Click="RunConversion_Click" Classes="actionConvert" HorizontalAlignment="Stretch" IsEnabled="{Binding CanRun}"/>
+                            <Button Content="3  Convert DOCX to USFM and project" Click="RunConversion_Click" Classes="actionConvert" HorizontalAlignment="Stretch" IsEnabled="{Binding CanRun}"/>
                         </StackPanel>
                     </Border>
 
                     <Border Classes="card">
                         <StackPanel Spacing="10">
-                            <TextBlock Classes="eyebrow" Text="Existing files"/>
-                            <TextBlock Classes="sectionTitle" Text="Repair studio" FontSize="19"/>
-                            <TextBlock Text="Choose the dedicated action for the selected USFM or BTTW project file." Classes="hint"/>
-                            <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
-                                <Button Grid.Column="0" Content="Clean USFM" Click="CleanUsfm_Click" Classes="cleaner" HorizontalAlignment="Stretch"
+                            <TextBlock Classes="eyebrow" Text="Existing-file repair"/>
+                            <TextBlock Classes="sectionTitle" Text="Clean without conversion" FontSize="19"/>
+                            <TextBlock Text="First choose an existing file above. Only the matching repair action will activate." Classes="hint"/>
+                            <StackPanel Spacing="8">
+                                <Button Click="CleanUsfm_Click" Classes="cleaner" HorizontalAlignment="Stretch"
                                         ToolTip.Tip="Cleans punctuation, spacing and visible verse-marker artifacts in the selected .usfm or .txt file."
-                                        IsEnabled="{Binding CanCleanUsfm}"/>
-                                <Button Grid.Column="1" Content="Clean BTTW Project" Click="CleanProject_Click" Classes="cleaner" HorizontalAlignment="Stretch"
+                                        IsEnabled="{Binding CanCleanUsfm}">
+                                    <StackPanel Spacing="1"><TextBlock Text="Clean USFM file" FontWeight="Bold"/><TextBlock Text="For .usfm or .txt scripture files" FontSize="10" Opacity="0.8"/></StackPanel>
+                                </Button>
+                                <Button Click="CleanProject_Click" Classes="cleaner" HorizontalAlignment="Stretch"
                                         ToolTip.Tip="Cleans the selected .tstudio project while preserving project metadata, with an optional USFM export."
-                                        IsEnabled="{Binding CanCleanProject}"/>
-                            </Grid>
-                            <TextBlock Text="Select a .usfm/.txt file for USFM cleaning or a .tstudio file for project cleaning." Classes="hint"/>
+                                        IsEnabled="{Binding CanCleanProject}">
+                                    <StackPanel Spacing="1"><TextBlock Text="Clean BTTW project" FontWeight="Bold"/><TextBlock Text="For a .tstudio project package" FontSize="10" Opacity="0.8"/></StackPanel>
+                                </Button>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
                     <Border Classes="card" Background="{StaticResource AmberSoft}" BorderBrush="#E2B77D">
                         <StackPanel Spacing="5">
-                            <TextBlock Text="Current output" FontWeight="Bold" Foreground="#74400E"/>
+                            <TextBlock Text="Output destination preview" FontWeight="Bold" Foreground="#74400E"/>
                             <TextBlock Text="{Binding OutputTargetPreview}" Foreground="#74400E" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
@@ -432,7 +475,8 @@
                         <DockPanel>
                             <StackPanel DockPanel.Dock="Top" Spacing="3" Margin="0,0,0,10">
                                 <TextBlock Classes="eyebrow" Text="Review"/>
-                                <TextBlock Classes="sectionTitle" Text="Findings" FontSize="19"/>
+                                <TextBlock Classes="sectionTitle" Text="Findings and safeguards" FontSize="19"/>
+                                <TextBlock Text="Errors need attention. Warnings identify content to review; they are not silently rewritten." Classes="hint"/>
                             </StackPanel>
                             <ListBox ItemsSource="{Binding Issues}" MinHeight="220" Background="Transparent" BorderThickness="0">
                                 <ListBox.ItemTemplate>
@@ -458,9 +502,12 @@
 
                     <Border Grid.Column="1" Classes="card" Background="#202A27" BorderBrush="#202A27">
                         <DockPanel>
-                            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,10">
-                                <Border Width="9" Height="9" CornerRadius="5" Background="#64C3A9" VerticalAlignment="Center"/>
-                                <TextBlock Text="Activity log" FontFamily="Georgia" FontSize="19" FontWeight="Bold" Foreground="White"/>
+                            <StackPanel DockPanel.Dock="Top" Spacing="3" Margin="0,0,0,10">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Border Width="9" Height="9" CornerRadius="5" Background="#64C3A9" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Activity log" FontFamily="Georgia" FontSize="19" FontWeight="Bold" Foreground="White"/>
+                                </StackPanel>
+                                <TextBlock Text="Processing progress and generated-file locations appear here." Foreground="#AFC7BF" FontSize="11" Margin="17,0,0,0"/>
                             </StackPanel>
                             <TextBox Text="{Binding ConsoleLog}"
                                      MinHeight="220"
