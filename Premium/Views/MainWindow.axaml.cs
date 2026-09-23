@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Linq;
 using System.Xml.Linq;
@@ -29,6 +30,13 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        HeaderVersionText.Text = $"v{GetPublicVersion()}";
+    }
+
+    private static string GetPublicVersion()
+    {
+        var version = typeof(MainWindow).Assembly.GetName().Version;
+        return version is null ? "unknown" : $"{version.Major}.{version.Minor}.{version.Build}";
     }
 
     protected override void OnOpened(EventArgs e)
@@ -292,8 +300,53 @@ public partial class MainWindow : Window
             ResetBookIndicatorsForNewInput();
             Vm.InputDocxPath = files[0].Path.LocalPath;
             Vm.InputSourceMode = "USFM/project file";
-            Vm.Status = "USFM/project input selected.";
+            var detectedLanguage = TryReadTstudioLanguageCode(Vm.InputDocxPath);
+            if (!string.IsNullOrWhiteSpace(detectedLanguage))
+            {
+                Vm.LanguageCode = detectedLanguage;
+            }
+            Vm.Status = string.IsNullOrWhiteSpace(detectedLanguage)
+                ? "USFM/project input selected."
+                : $"USFM/project input selected. Detected language code: {detectedLanguage}.";
         }
+    }
+
+    private static string? TryReadTstudioLanguageCode(string inputPath)
+    {
+        if (!string.Equals(Path.GetExtension(inputPath), ".tstudio", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(inputPath);
+            foreach (var entry in archive.Entries
+                         .Where(entry => entry.FullName.EndsWith("/manifest.json", StringComparison.OrdinalIgnoreCase))
+                         .OrderByDescending(entry => entry.FullName.Count(ch => ch == '/')))
+            {
+                using var stream = entry.Open();
+                using var document = JsonDocument.Parse(stream);
+                if (document.RootElement.TryGetProperty("target_language", out var targetLanguage)
+                    && targetLanguage.ValueKind == JsonValueKind.Object
+                    && targetLanguage.TryGetProperty("id", out var id)
+                    && id.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(id.GetString()))
+                {
+                    return id.GetString()!.Trim();
+                }
+            }
+        }
+        catch (InvalidDataException)
+        {
+            // The cleaner reports malformed project packages when the user starts repair.
+        }
+        catch (JsonException)
+        {
+            // Keep selection non-destructive when manifest metadata cannot be read.
+        }
+
+        return null;
     }
 
     private async void BrowseOutputFolder_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -321,7 +374,8 @@ public partial class MainWindow : Window
         Vm.InputDocxPath = string.Empty;
         Vm.InputSourceMode = "Single DOCX file";
         Vm.OutputFolderPath = string.Empty;
-        Vm.OutputSetName = "output_ui_run";
+        Vm.OutputSetName = string.Empty;
+        Vm.LanguageCode = string.Empty;
         Vm.RunMode = "permissive";
         Vm.SelectedCanon = "Protestant NT";
         Vm.CompatibilityProfile = "BTTW legacy compatibility";
@@ -1139,7 +1193,7 @@ public partial class MainWindow : Window
 
         Vm.SelectedBooksLabel = BuildSelectedBooksLabel(selected);
 
-        var outputDir = Path.Combine(Vm.OutputFolderPath, Vm.OutputSetName);
+        var outputDir = ResolveAvailableOutputDirectory(Vm.OutputFolderPath, Vm.GetEffectiveOutputSetName());
         var reportPath = Path.Combine(outputDir, "conversion-report.txt");
         Directory.CreateDirectory(outputDir);
 
@@ -1160,7 +1214,7 @@ public partial class MainWindow : Window
             reportPath,
             Vm.RunMode,
             MapCanonToCliToken(Vm.SelectedCanon),
-            Vm.LanguageCode,
+            Vm.GetEffectiveLanguageCode(),
             selectedIds,
             Vm.PreserveDocxVerseNumbering);
 
@@ -1229,7 +1283,7 @@ public partial class MainWindow : Window
             if (Vm.GenerateBttwProjects)
             {
                 projectPackages = execution.GeneratedUsfmPaths
-                    .Select(path => BttwProjectPackageService.PackageUsfm(path, Vm.LanguageCode))
+                    .Select(path => BttwProjectPackageService.PackageUsfm(path, Vm.GetEffectiveLanguageCode()))
                     .ToArray();
                 if (projectPackages.Count > 0)
                 {
@@ -1363,10 +1417,26 @@ public partial class MainWindow : Window
             }
         }
 
-        if (string.IsNullOrWhiteSpace(Vm.OutputSetName))
+    }
+
+    private static string ResolveAvailableOutputDirectory(string outputRoot, string resultFolderName)
+    {
+        var candidate = Path.Combine(outputRoot, resultFolderName);
+        if (!Directory.Exists(candidate))
         {
-            Vm.OutputSetName = "output_ui_run";
+            return candidate;
         }
+
+        for (var suffix = 2; suffix < 10_000; suffix++)
+        {
+            var alternate = Path.Combine(outputRoot, $"{resultFolderName} ({suffix})");
+            if (!Directory.Exists(alternate))
+            {
+                return alternate;
+            }
+        }
+
+        throw new IOException($"Unable to create a unique result folder for {resultFolderName}.");
     }
 
     private List<BookSelectionOption> BuildManualBookSelectionOptions(DocxScanResult scan)

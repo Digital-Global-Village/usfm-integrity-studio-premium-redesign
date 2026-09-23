@@ -1,6 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using UsfmIntegrityStudio.Models;
@@ -19,10 +20,10 @@ public partial class MainWindowViewModel : ViewModelBase
     private string outputFolderPath = string.Empty;
 
     [ObservableProperty]
-    private string outputSetName = "output_ui_run";
+    private string outputSetName = string.Empty;
 
     [ObservableProperty]
-    private string languageCode = "und";
+    private string languageCode = string.Empty;
 
     [ObservableProperty]
     private string runMode = "permissive";
@@ -74,8 +75,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public bool CanRun => !IsRunning
         && !string.IsNullOrWhiteSpace(InputDocxPath)
         && IsDocxInputPath(InputDocxPath)
-        && !string.IsNullOrWhiteSpace(OutputFolderPath)
-        && !string.IsNullOrWhiteSpace(OutputSetName);
+        && !string.IsNullOrWhiteSpace(OutputFolderPath);
 
     public bool CanScan => !IsRunning
         && !string.IsNullOrWhiteSpace(InputDocxPath)
@@ -96,7 +96,8 @@ public partial class MainWindowViewModel : ViewModelBase
     public string OutputFormatHint => GenerateBttwProjects
         ? "Output format: split .USFM files + BTTW .tstudio project packages + reports."
         : "Output format: split .USFM files (.usfm) + report files (.txt/.json).";
-    public string LanguageCodeHint => "Three-letter language code used in output filenames, for example skr, rus, urd.";
+    public string ResultFolderHint => "A separate result folder keeps every file from this run together. Leave blank to generate one from the source name.";
+    public string LanguageCodeHint => "Used in generated filenames and project metadata. Two- or three-letter codes and script tags are accepted; blank uses und.";
     public string InputSourceHint => InputSourceMode.Equals("DOCX chapter folder", StringComparison.OrdinalIgnoreCase)
         ? "Folder mode: the app will merge all DOCX files in the selected folder into one temporary book-level DOCX before scan, standardization, and conversion."
         : "Single-file mode: use one DOCX that contains the book content you want to process.";
@@ -127,9 +128,36 @@ public partial class MainWindowViewModel : ViewModelBase
             : $"Configured source folder was not found: {SourceTextRootPath}";
 
     public string OutputTargetPreview =>
-        string.IsNullOrWhiteSpace(OutputFolderPath) || string.IsNullOrWhiteSpace(OutputSetName)
+        string.IsNullOrWhiteSpace(OutputFolderPath)
             ? "Output target: (not set)"
-            : $"Output target: {Path.Combine(OutputFolderPath, OutputSetName)}";
+            : $"Output target: {Path.Combine(OutputFolderPath, GetEffectiveOutputSetName())}";
+
+    public string GetEffectiveOutputSetName()
+    {
+        var requested = string.IsNullOrWhiteSpace(OutputSetName)
+            ? BuildResultFolderName(InputDocxPath)
+            : OutputSetName;
+        return SanitizeResultFolderName(requested);
+    }
+
+    public string GetEffectiveLanguageCode() => string.IsNullOrWhiteSpace(LanguageCode) ? "und" : LanguageCode.Trim();
+
+    public static string BuildResultFolderName(string inputPath)
+    {
+        var sourceName = string.IsNullOrWhiteSpace(inputPath)
+            ? "document"
+            : Path.GetFileNameWithoutExtension(inputPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        return SanitizeResultFolderName($"{sourceName}_results");
+    }
+
+    public static string SanitizeResultFolderName(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars().ToHashSet();
+        var sanitized = new string(value.Trim()
+            .Select(ch => invalid.Contains(ch) || ch is '/' or '\\' ? '_' : ch)
+            .ToArray()).Trim(' ', '.');
+        return string.IsNullOrWhiteSpace(sanitized) ? "document_results" : sanitized;
+    }
 
     public string GetIssuesAsJson()
     {
@@ -138,7 +166,7 @@ public partial class MainWindowViewModel : ViewModelBase
             generatedAtUtc = DateTimeOffset.UtcNow,
             inputDocx = InputDocxPath,
             outputFolder = OutputFolderPath,
-            outputSetName = OutputSetName,
+            outputSetName = GetEffectiveOutputSetName(),
             mode = RunMode,
             canonProfile = SelectedCanon,
             limitChapters = LimitChapters,
@@ -161,6 +189,7 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanCleanUsfmProject));
         OnPropertyChanged(nameof(CanCleanUsfm));
         OnPropertyChanged(nameof(CanCleanProject));
+        OnPropertyChanged(nameof(OutputTargetPreview));
     }
 
     partial void OnInputSourceModeChanged(string value)
@@ -182,14 +211,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     partial void OnLanguageCodeChanged(string value)
     {
-        var normalized = string.IsNullOrWhiteSpace(value)
-            ? "und"
-            : value.Trim().ToLowerInvariant();
-
-        if (!string.Equals(normalized, value, StringComparison.Ordinal))
-        {
-            LanguageCode = normalized;
-        }
+        OnPropertyChanged(nameof(OutputTargetPreview));
     }
 
     partial void OnRunModeChanged(string value)

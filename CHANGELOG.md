@@ -4,6 +4,45 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+## 0.2.4 - 2026-09-23
+
+### Added
+
+- Display the public product version beside the main USFM Integrity Studio
+  heading so testers can identify the running build immediately.
+- Detect a selected BTTW project's target-language code from its embedded
+  manifest without modifying the project.
+- Generate a readable result-folder name from the selected source when the
+  user leaves the result name blank, while preserving an explicitly entered
+  name or language tag.
+
+### Changed
+
+- Use distinct workflow-guide colors for source selection, settings,
+  processing, and review.
+- Replace prefilled result-folder and language values with explanatory
+  placeholders. Blank language metadata safely falls back to `und` only when
+  output is generated.
+- Accept two-letter, three-letter, and script-qualified language identifiers
+  such as `ur`, `urd`, and `ur-PK`.
+- Apply Arabic-derived straight-quote conversion only when Arabic-script text
+  or compatible project language metadata supports it. Latin-script content,
+  including `kls`, is preserved.
+
+### Fixed
+
+- Recognize Arabic Supplement, Arabic Extended, and Arabic Presentation Forms
+  when selecting RTL quote direction.
+- Avoid silently writing a conversion run over an existing result directory;
+  a numbered sibling directory is selected instead.
+
+### Verification
+
+- Added regression coverage for empty workspace defaults, generated and custom
+  result-folder names, language-tag preservation, script-neutral Urdu metadata,
+  embedded Latin text, `kls` content, extended Arabic Unicode, and preservation
+  of existing project-language metadata.
+
 ## 0.2.2 - 2026-09-14
 
 ### Added

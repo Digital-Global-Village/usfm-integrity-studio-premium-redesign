@@ -198,16 +198,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
           cp Premium/packages.lock.json release-assets/DEPENDENCIES.lock.json
           (
             cd release-assets
             find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 \
               | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
           )
+          release_changes=$(awk -v heading="## ${version} " '
+            index($0, heading) == 1 { capture = 1; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.md)
           cat > release-notes.md <<EOF
           ## USFM Integrity Studio Premium ${GITHUB_REF_NAME}
 
           Official cross-platform packages built from commit \`${GITHUB_SHA}\`.
+
+          ### Changes in this release
+
+          ${release_changes}
 
           - macOS: Apple Silicon and Intel DMGs, plus zipped app bundles
           - Windows: x64 installer and portable archive

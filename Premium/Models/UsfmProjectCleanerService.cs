@@ -36,7 +36,7 @@ public sealed record UsfmCleanResult(
     IReadOnlyList<string> StructuralRepairs,
     IReadOnlyList<string> VerificationIssues);
 
-internal sealed record TstudioManifest(string ProjectId, string ProjectName, string ResourceName, string Format);
+internal sealed record TstudioManifest(string ProjectId, string ProjectName, string ResourceName, string Format, string? TargetLanguageId);
 
 internal readonly record struct VerseSegment(int Number, string Text);
 
@@ -187,13 +187,14 @@ public static class UsfmProjectCleanerService
             var chunkLayoutWarnings = FindTstudioChunkLayoutWarnings(tempRoot, canonProfile);
             ThrowIfTstudioIsContaminated(tempRoot, canonProfile);
             var sourceContextsByProjectRoot = LoadSourceContexts(tempRoot, sourceTextRoot);
+            var targetLanguagesByProjectRoot = LoadTargetLanguages(tempRoot);
 
             foreach (var filePath in Directory.EnumerateFiles(tempRoot, "*", SearchOption.AllDirectories)
                          .Where(IsCleanableTextFile))
             {
                 filesScanned++;
                 var (original, hadBom) = ReadCleanableText(filePath, stats);
-                var cleaned = CleanText(original, stats);
+                var cleaned = CleanText(original, stats, FindTargetLanguage(filePath, targetLanguagesByProjectRoot));
                 cleaned = RemoveLeadingOutOfChunkVerseMarker(filePath, cleaned, stats);
                 cleaned = CleanDirectSpeechAgainstSource(filePath, cleaned, sourceContextsByProjectRoot, stats);
                 cleaned = CleanTstudioChunkText(filePath, cleaned, stats);
@@ -644,6 +645,31 @@ public static class UsfmProjectCleanerService
         {
             yield return tempRoot;
         }
+    }
+
+    private static IReadOnlyDictionary<string, string> LoadTargetLanguages(string tempRoot)
+    {
+        var languages = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var projectRoot in EnumerateProjectRoots(tempRoot))
+        {
+            var languageId = ReadManifest(Path.Combine(projectRoot, "manifest.json")).TargetLanguageId;
+            if (!string.IsNullOrWhiteSpace(languageId))
+            {
+                languages[projectRoot] = languageId;
+            }
+        }
+
+        return languages;
+    }
+
+    private static string? FindTargetLanguage(string filePath, IReadOnlyDictionary<string, string> languagesByProjectRoot)
+    {
+        var fullPath = Path.GetFullPath(filePath);
+        return languagesByProjectRoot
+            .Where(item => fullPath.StartsWith(item.Key + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            .OrderByDescending(item => item.Key.Length)
+            .Select(item => item.Value)
+            .FirstOrDefault();
     }
 
     private static IReadOnlyList<string> StampTstudioGeneratorBuild(string tempRoot)
@@ -1247,19 +1273,21 @@ public static class UsfmProjectCleanerService
     {
         if (!File.Exists(manifestPath))
         {
-            return new TstudioManifest("unknown", "Unknown", "Unknown", "usfm");
+            return new TstudioManifest("unknown", "Unknown", "Unknown", "usfm", null);
         }
 
         using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath, Utf8NoBom));
         var root = doc.RootElement;
         var project = root.TryGetProperty("project", out var projectElement) ? projectElement : default;
         var resource = root.TryGetProperty("resource", out var resourceElement) ? resourceElement : default;
+        var targetLanguage = root.TryGetProperty("target_language", out var targetLanguageElement) ? targetLanguageElement : default;
 
         var projectId = TryGetString(project, "id")?.ToUpperInvariant() ?? "UNK";
         var projectName = TryGetString(project, "name") ?? projectId;
         var resourceName = TryGetString(resource, "name") ?? TryGetString(resource, "id") ?? string.Empty;
         var format = TryGetString(root, "format") ?? "usfm";
-        return new TstudioManifest(projectId, projectName, resourceName, format);
+        var targetLanguageId = TryGetString(targetLanguage, "id");
+        return new TstudioManifest(projectId, projectName, resourceName, format, targetLanguageId);
     }
 
     private static string? TryGetString(JsonElement element, string propertyName)
@@ -1271,7 +1299,7 @@ public static class UsfmProjectCleanerService
             : null;
     }
 
-    private static string CleanText(string text, CleanStats stats)
+    private static string CleanText(string text, CleanStats stats, string? targetLanguageId = null)
     {
         if (text.StartsWith('\ufeff'))
         {
@@ -1346,10 +1374,11 @@ public static class UsfmProjectCleanerService
         }
 
         cleaned = SplitAnchoredUsfmVerseLines(lines, lineBreak, stats);
-        cleaned = ConvertStraightQuotes(cleaned, stats);
-        cleaned = RepairDirectionalQuotes(cleaned, stats);
+        var usesArabicQuoteConvention = UsesArabicQuoteConvention(cleaned, targetLanguageId);
+        cleaned = ConvertStraightQuotes(cleaned, stats, targetLanguageId);
+        cleaned = RepairDirectionalQuotes(cleaned, stats, usesArabicQuoteConvention);
         cleaned = RepairUnpairedDoubleQuoteClosers(cleaned, stats);
-        var quoteSpaced = ContainsArabicScript(cleaned)
+        var quoteSpaced = usesArabicQuoteConvention
             ? ScripturePunctuationNormalizer.NormalizeArabicDerivedQuoteSpacing(cleaned)
             : ScripturePunctuationNormalizer.NormalizeDirectionalQuoteSpacing(cleaned);
         if (!string.Equals(quoteSpaced, cleaned, StringComparison.Ordinal))
@@ -1671,9 +1700,9 @@ public static class UsfmProjectCleanerService
         return $"{(needsLeadingSpace ? " " : string.Empty)}\\v {verseNumber} ";
     }
 
-    private static string RepairDirectionalQuotes(string text, CleanStats stats)
+    private static string RepairDirectionalQuotes(string text, CleanStats stats, bool useArabicQuoteConvention)
     {
-        if (ContainsArabicScript(text))
+        if (useArabicQuoteConvention)
         {
             return RepairArabicDirectionalQuotes(text, stats);
         }
@@ -1845,24 +1874,26 @@ public static class UsfmProjectCleanerService
             && nextIsBoundary;
     }
 
-    private static string ConvertStraightQuotes(string text, CleanStats stats)
+    private static string ConvertStraightQuotes(string text, CleanStats stats, string? targetLanguageId)
     {
         if (!text.Contains('"', StringComparison.Ordinal) && !text.Contains('\'', StringComparison.Ordinal))
         {
             return text;
         }
 
+        if (!UsesArabicQuoteConvention(text, targetLanguageId))
+        {
+            return text;
+        }
+
         var builder = new StringBuilder(text.Length);
-        var useArabicQuoteDirection = ContainsArabicScript(text);
         for (var index = 0; index < text.Length; index++)
         {
             var ch = text[index];
             if (ch == '"')
             {
                 var isOpening = IsOpeningQuoteContext(text, index);
-                builder.Append(useArabicQuoteDirection
-                    ? isOpening ? '”' : '“'
-                    : isOpening ? '“' : '”');
+                builder.Append(isOpening ? '”' : '“');
                 stats.StraightQuotesConverted++;
                 continue;
             }
@@ -1879,6 +1910,43 @@ public static class UsfmProjectCleanerService
 
         return builder.ToString();
     }
+
+    private static bool UsesArabicQuoteConvention(string text, string? targetLanguageId)
+    {
+        if (ContainsArabicScriptLetter(text))
+        {
+            return true;
+        }
+
+        if (text.Any(char.IsLetter))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(targetLanguageId))
+        {
+            return false;
+        }
+
+        var subtags = targetLanguageId.Trim().Replace('_', '-').Split('-', StringSplitOptions.RemoveEmptyEntries);
+        if (subtags.Any(subtag => string.Equals(subtag, "Arab", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        if (subtags.Skip(1).Any(subtag => subtag.Length == 4))
+        {
+            return false;
+        }
+
+        return ArabicScriptLanguageCodes.Contains(subtags[0]);
+    }
+
+    private static readonly HashSet<string> ArabicScriptLanguageCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ar", "ara", "ur", "urd", "fa", "fas", "per", "pes", "ps", "pus",
+        "sd", "snd", "pnb", "skr", "ks", "kas", "bal", "bft", "haz", "ug", "uig", "ckb"
+    };
 
     private static bool ShouldConvertStraightSingleQuote(string text, int quoteIndex)
     {
@@ -1934,13 +2002,23 @@ public static class UsfmProjectCleanerService
     {
         foreach (var ch in value)
         {
-            if (ch >= '\u0600' && ch <= '\u06FF')
+            if ((ch >= '\u0600' && ch <= '\u06FF')
+                || (ch >= '\u0750' && ch <= '\u077F')
+                || (ch >= '\u0870' && ch <= '\u089F')
+                || (ch >= '\u08A0' && ch <= '\u08FF')
+                || (ch >= '\uFB50' && ch <= '\uFDFF')
+                || (ch >= '\uFE70' && ch <= '\uFEFF'))
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static bool ContainsArabicScriptLetter(string value)
+    {
+        return value.Any(ch => char.IsLetter(ch) && ContainsArabicScript(ch.ToString()));
     }
 
     private static string CleanVerseBody(int verseNumber, string body, out bool changed)

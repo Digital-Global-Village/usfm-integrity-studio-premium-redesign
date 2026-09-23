@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Xml.Linq;
 using UsfmIntegrityStudio.Models;
+using UsfmIntegrityStudio.ViewModels;
 using UsfmTools.Text;
 
 var cases = new (string Name, string Input, string Expected)[]
@@ -34,6 +35,27 @@ var cases = new (string Name, string Input, string Expected)[]
 };
 
 var failures = new List<string>();
+var defaultsViewModel = new MainWindowViewModel();
+if (!string.IsNullOrEmpty(defaultsViewModel.OutputSetName)
+    || !string.IsNullOrEmpty(defaultsViewModel.LanguageCode)
+    || !string.Equals(defaultsViewModel.GetEffectiveLanguageCode(), "und", StringComparison.Ordinal))
+{
+    failures.Add("workspace defaults: result-folder and language fields must start empty while language falls back internally to und");
+}
+
+defaultsViewModel.InputDocxPath = "/tmp/Romans Urdu (Full).docx";
+if (!string.Equals(defaultsViewModel.GetEffectiveOutputSetName(), "Romans Urdu (Full)_results", StringComparison.Ordinal))
+{
+    failures.Add($"workspace defaults: unexpected generated result folder [{defaultsViewModel.GetEffectiveOutputSetName()}]");
+}
+
+defaultsViewModel.OutputSetName = "Urdu Romans revision";
+defaultsViewModel.LanguageCode = "ur-PK";
+if (!string.Equals(defaultsViewModel.GetEffectiveOutputSetName(), "Urdu Romans revision", StringComparison.Ordinal)
+    || !string.Equals(defaultsViewModel.GetEffectiveLanguageCode(), "ur-PK", StringComparison.Ordinal))
+{
+    failures.Add("workspace defaults: user-entered result folder or language tag was not preserved");
+}
 var appAssembly = typeof(UsfmProjectCleanerService).Assembly;
 var appMetadata = appAssembly
     .GetCustomAttributes<AssemblyMetadataAttribute>()
@@ -236,11 +258,13 @@ try
     var projectRoot = Path.Combine(sourceRoot, "ur_jhn_text_ulb");
     var chapterRoot = Path.Combine(projectRoot, "08");
     Directory.CreateDirectory(chapterRoot);
+    Directory.CreateDirectory(Path.Combine(projectRoot, "front"));
 
     File.WriteAllText(
         Path.Combine(projectRoot, "manifest.json"),
         """
         {
+          "target_language": { "id": "ur", "name": "Urdu", "direction": "rtl" },
           "project": { "id": "JHN", "name": "John" },
           "resource": { "id": "ulb", "name": "ULB" },
           "format": "usfm",
@@ -253,6 +277,26 @@ try
     const string chunkExpected = "\\v 28 کہا، ”جب تُم آئے۔ \\v 29 جواب دیا۔“";
     File.WriteAllText(Path.Combine(chapterRoot, "28.txt"), chunkInput, new UTF8Encoding(false));
     File.WriteAllText(Path.Combine(chapterRoot, "30.txt"), "\\v 30 اس نے کہ ’سلام‘۔", new UTF8Encoding(false));
+    File.WriteAllText(Path.Combine(chapterRoot, "31.txt"), "\\v 31 He said, \"Peace.\"", new UTF8Encoding(false));
+    File.WriteAllText(Path.Combine(projectRoot, "front", "title.txt"), "\"123\"", new UTF8Encoding(false));
+
+    var klsProjectRoot = Path.Combine(sourceRoot, "kls_jhn_text_ulb");
+    var klsChapterRoot = Path.Combine(klsProjectRoot, "08");
+    Directory.CreateDirectory(klsChapterRoot);
+    File.WriteAllText(
+        Path.Combine(klsProjectRoot, "manifest.json"),
+        """
+        {
+          "target_language": { "id": "kls", "name": "Kalasha", "direction": "ltr" },
+          "project": { "id": "JHN", "name": "John" },
+          "resource": { "id": "ulb", "name": "ULB" },
+          "format": "usfm",
+          "finished_chunks": []
+        }
+        """,
+        new UTF8Encoding(false));
+    const string klsChunk = "\\v 28 He said, \"Peace.\"";
+    File.WriteAllText(Path.Combine(klsChapterRoot, "28.txt"), klsChunk, new UTF8Encoding(false));
 
     var explicitSourceRoot = Path.Combine(tempRoot, "configured-source");
     Directory.CreateDirectory(explicitSourceRoot);
@@ -290,6 +334,29 @@ try
         }
     }
 
+    var metadataDirectedActual = ReadEntry(cleanedArchive, "ur_jhn_text_ulb/08/31.txt");
+    if (!string.Equals(metadataDirectedActual, "\\v 31 He said, \"Peace.\"", StringComparison.Ordinal))
+    {
+        failures.Add($"language-aware quote cleaning: embedded English text was unexpectedly changed [{metadataDirectedActual}]");
+    }
+
+    var metadataFallbackActual = ReadEntry(cleanedArchive, "ur_jhn_text_ulb/front/title.txt");
+    if (!string.Equals(metadataFallbackActual, "”123“", StringComparison.Ordinal))
+    {
+        failures.Add($"language-aware quote cleaning: script-neutral Urdu title produced [{metadataFallbackActual}]");
+    }
+
+    if (!string.Equals(ReadEntry(cleanedArchive, "kls_jhn_text_ulb/08/28.txt"), klsChunk, StringComparison.Ordinal))
+    {
+        failures.Add("language-aware quote cleaning: kls straight quotes were unexpectedly converted");
+    }
+
+    if (!ReadEntry(cleanedArchive, "ur_jhn_text_ulb/manifest.json").Contains("\"id\": \"ur\"", StringComparison.Ordinal)
+        || !ReadEntry(cleanedArchive, "kls_jhn_text_ulb/manifest.json").Contains("\"id\": \"kls\"", StringComparison.Ordinal))
+    {
+        failures.Add("language-aware quote cleaning: existing project language metadata was not preserved");
+    }
+
 
     var sourceAwareEntry = cleanedArchive.GetEntry("ur_jhn_text_ulb/08/30.txt");
     if (sourceAwareEntry is null)
@@ -304,6 +371,16 @@ try
         {
             failures.Add($"configured source-USFM folder: redundant direct-speech کہ was not removed [{actual}]");
         }
+    }
+
+    var extendedArabicInput = Path.Combine(tempRoot, "extended-arabic.usfm");
+    var extendedArabicOutput = Path.Combine(tempRoot, "extended-arabic-cleaned.usfm");
+    File.WriteAllText(extendedArabicInput, "\\v 1 \u08A0 \"test\"", new UTF8Encoding(false));
+    UsfmProjectCleanerService.Clean(extendedArabicInput, extendedArabicOutput, CanonProfile.ProtestantNt);
+    var extendedArabicActual = File.ReadAllText(extendedArabicOutput);
+    if (!string.Equals(extendedArabicActual, "\\v 1 \u08A0 ”test“", StringComparison.Ordinal))
+    {
+        failures.Add($"extended Arabic Unicode quote cleaning: expected Arabic-derived direction but got [{extendedArabicActual}]");
     }
 }
 finally
