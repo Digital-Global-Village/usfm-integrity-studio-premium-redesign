@@ -4,6 +4,23 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+## 0.2.5 - 2026-09-26
+
+### Fixed
+
+- Remove `U+2060` word-joiner residue only when it occurs between a USFM verse
+  marker and its verse text, including repeated residue separated by whitespace.
+- Report and fail post-clean verification if verse-marker word-joiner residue
+  remains in a standalone USFM file or BTTW project package.
+
+### Verification
+
+- Added synthetic Latin and RTL coverage for standalone USFM and `.tstudio`
+  cleaning, removal counts, quote preservation, and second-pass idempotence.
+- Canon tables, chunk boundaries, verse numbering, language metadata, DOCX
+  conversion, and text outside the verified marker-residue signature are
+  unchanged.
+
 ## 0.2.4 - 2026-09-23
 
 ### Added

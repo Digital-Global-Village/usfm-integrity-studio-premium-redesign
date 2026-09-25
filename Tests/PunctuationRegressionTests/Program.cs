@@ -295,8 +295,9 @@ try
         }
         """,
         new UTF8Encoding(false));
-    const string klsChunk = "\\v 28 He said, \"Peace.\"";
-    File.WriteAllText(Path.Combine(klsChapterRoot, "28.txt"), klsChunk, new UTF8Encoding(false));
+    const string klsChunkInput = "\\v 28\u2060He said, \"Peace.\" \\v 29 \u2060 \u2060Next verse.";
+    const string klsChunkExpected = "\\v 28 He said, \"Peace.\" \\v 29 Next verse.";
+    File.WriteAllText(Path.Combine(klsChapterRoot, "28.txt"), klsChunkInput, new UTF8Encoding(false));
 
     var explicitSourceRoot = Path.Combine(tempRoot, "configured-source");
     Directory.CreateDirectory(explicitSourceRoot);
@@ -346,9 +347,14 @@ try
         failures.Add($"language-aware quote cleaning: script-neutral Urdu title produced [{metadataFallbackActual}]");
     }
 
-    if (!string.Equals(ReadEntry(cleanedArchive, "kls_jhn_text_ulb/08/28.txt"), klsChunk, StringComparison.Ordinal))
+    if (!string.Equals(ReadEntry(cleanedArchive, "kls_jhn_text_ulb/08/28.txt"), klsChunkExpected, StringComparison.Ordinal))
     {
-        failures.Add("language-aware quote cleaning: kls straight quotes were unexpectedly converted");
+        failures.Add("word-joiner cleaning: kls verse-marker residue was not removed or straight quotes were unexpectedly converted");
+    }
+
+    if (sourceAwareResult.UnsafeControlCharsRemoved != 3)
+    {
+        failures.Add($"word-joiner cleaning: expected three reported U+2060 removals from the tstudio, got {sourceAwareResult.UnsafeControlCharsRemoved}");
     }
 
     if (!ReadEntry(cleanedArchive, "ur_jhn_text_ulb/manifest.json").Contains("\"id\": \"ur\"", StringComparison.Ordinal)
@@ -381,6 +387,29 @@ try
     if (!string.Equals(extendedArabicActual, "\\v 1 \u08A0 ”test“", StringComparison.Ordinal))
     {
         failures.Add($"extended Arabic Unicode quote cleaning: expected Arabic-derived direction but got [{extendedArabicActual}]");
+    }
+
+    var wordJoinerInput = Path.Combine(tempRoot, "word-joiner.usfm");
+    var wordJoinerOutput = Path.Combine(tempRoot, "word-joiner-cleaned.usfm");
+    var wordJoinerSecondOutput = Path.Combine(tempRoot, "word-joiner-cleaned-second.usfm");
+    const string wordJoinerSource = "\\v 1\u2060Latin text. \\v 2 \u2060 \u2060متن۔ \\v 3 \u2060\n\u2060Continuation text.";
+    const string wordJoinerExpected = "\\v 1 Latin text. \\v 2 متن۔ \\v 3 Continuation text.";
+    File.WriteAllText(wordJoinerInput, wordJoinerSource, new UTF8Encoding(false));
+    var wordJoinerResult = UsfmProjectCleanerService.Clean(wordJoinerInput, wordJoinerOutput, CanonProfile.ProtestantNt);
+    var wordJoinerActual = File.ReadAllText(wordJoinerOutput);
+    if (!string.Equals(wordJoinerActual, wordJoinerExpected, StringComparison.Ordinal)
+        || wordJoinerResult.UnsafeControlCharsRemoved != 5
+        || wordJoinerResult.VerificationIssueCount != 0)
+    {
+        failures.Add($"word-joiner USFM cleaning: expected [{wordJoinerExpected}] with five removals and no verification issues, got [{wordJoinerActual}], removals {wordJoinerResult.UnsafeControlCharsRemoved}, issues {wordJoinerResult.VerificationIssueCount}");
+    }
+
+    var wordJoinerSecondResult = UsfmProjectCleanerService.Clean(wordJoinerOutput, wordJoinerSecondOutput, CanonProfile.ProtestantNt);
+    if (!string.Equals(File.ReadAllText(wordJoinerSecondOutput), wordJoinerActual, StringComparison.Ordinal)
+        || wordJoinerSecondResult.FilesChanged != 0
+        || wordJoinerSecondResult.UnsafeControlCharsRemoved != 0)
+    {
+        failures.Add("word-joiner USFM cleaning: second pass was not idempotent");
     }
 }
 finally

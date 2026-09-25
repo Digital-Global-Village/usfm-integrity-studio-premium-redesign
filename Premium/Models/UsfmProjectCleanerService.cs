@@ -95,6 +95,10 @@ public static class UsfmProjectCleanerService
         @"[\u200e\u200f\u202a-\u202e\u2066-\u2069]",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex VerseMarkerWordJoinerResidueRegex = new(
+        @"(?<marker>\\v[ \t]*\d+)(?<residue>(?:[ \t\r\n]*\u2060)+[ \t\r\n]*)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     private static readonly Regex EmptyVerseBodyJunkRegex = new(
         @"[\s\u200e\u200f\u202a-\u202e\ufeff۔.،,؛:!؟?()\[\]{}‘’""'\-]+",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -547,6 +551,11 @@ public static class UsfmProjectCleanerService
                     issues.Add($"Bidi control character remains: {relativePath}");
                 }
 
+                if (VerseMarkerWordJoinerResidueRegex.IsMatch(text))
+                {
+                    issues.Add($"Word-joiner residue remains after verse marker: {relativePath}");
+                }
+
                 var isChunkPath = TryParseChunkPath(relativePath, out var chapter, out var verse);
                 if (expectedVerses is not null && isChunkPath && IsImpossibleChunk(chapter, verse, expectedVerses))
                 {
@@ -621,6 +630,11 @@ public static class UsfmProjectCleanerService
         if (BidiControlRegex.IsMatch(text))
         {
             issues.Add($"Bidi control character remains: {Path.GetFileName(outputPath)}");
+        }
+
+        if (VerseMarkerWordJoinerResidueRegex.IsMatch(text))
+        {
+            issues.Add($"Word-joiner residue remains after verse marker: {Path.GetFileName(outputPath)}");
         }
 
         return issues;
@@ -1313,6 +1327,7 @@ public static class UsfmProjectCleanerService
             return string.Empty;
         });
 
+        text = NormalizeVerseMarkerWordJoinerResidue(text, stats);
         text = StripBidiControlCharacters(text, stats);
 
         text = NormalizeVisibleVerseMarkerArtifacts(text, stats);
@@ -1387,6 +1402,15 @@ public static class UsfmProjectCleanerService
         }
 
         return quoteSpaced;
+    }
+
+    private static string NormalizeVerseMarkerWordJoinerResidue(string text, CleanStats stats)
+    {
+        return VerseMarkerWordJoinerResidueRegex.Replace(text, match =>
+        {
+            stats.UnsafeControlCharsRemoved += match.Groups["residue"].Value.Count(ch => ch == '\u2060');
+            return match.Groups["marker"].Value + " ";
+        });
     }
 
     private static string SplitAnchoredUsfmVerseLines(string[] lines, string lineBreak, CleanStats stats)
