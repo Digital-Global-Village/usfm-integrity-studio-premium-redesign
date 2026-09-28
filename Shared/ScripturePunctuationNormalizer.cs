@@ -12,6 +12,10 @@ public static class ScripturePunctuationNormalizer
         @"([!?؟])[.۔]",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex DuplicateAsciiFullStopRegex = new(
+        @"(?<!\.)\.\s*\.(?!\.)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static readonly Regex SpaceBeforePunctuationRegex = new(
         @"\s+([,.;:!?،؛؟۔])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -97,6 +101,7 @@ public static class ScripturePunctuationNormalizer
     {
         var result = NormalizeUsfmVerseMarkerPunctuation(value);
         result = RedundantFullStopAfterQuestionOrExclamationRegex.Replace(result, "$1");
+        result = DuplicateAsciiFullStopRegex.Replace(result, ".");
         result = SpaceBeforePunctuationRegex.Replace(result, "$1");
         result = NormalizeUsfmVerseMarkerPunctuation(result);
         result = SpaceAfterOpeningParenthesisRegex.Replace(result, "(");

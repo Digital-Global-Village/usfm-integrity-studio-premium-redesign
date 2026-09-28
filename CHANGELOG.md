@@ -4,6 +4,58 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+## 0.2.8 - 2026-09-28
+
+### Fixed
+
+- Remove files named exactly `.DS_Store` from cleaned `.tstudio` packages,
+  including package-root and nested chapter copies.
+- Report the number of Finder metadata files removed without counting or
+  rewriting scripture content.
+
+### Verification
+
+- Added synthetic package-root and nested `.DS_Store` regression fixtures.
+- Confirmed similarly hidden non-target files remain byte-for-byte unchanged.
+- Confirmed a second cleaning pass reports no additional metadata removal.
+
+## 0.2.7 - 2026-09-28
+
+### Fixed
+
+- Remove standalone `\\p` markers accidentally persisted in non-front chapter
+  title files while preserving the title text itself.
+- Report reversed/loose verse-marker normalization only when reconstructed text
+  actually differs from the input.
+- Describe punctuation/spacing counts as normalized text lines, matching what
+  the cleaner actually records.
+- Collapse exactly doubled ASCII full stops, including spaced `. .` artifacts,
+  without changing intentional three-dot ellipses.
+
+### Verification
+
+- Added synthetic regression coverage for title-marker removal, truthful
+  normalization counts, doubled-period cleanup, ellipsis preservation, and
+  second-pass idempotence.
+- Out-of-range verses remain warning-only and are never renumbered or deleted.
+
+## 0.2.6 - 2026-09-28
+
+### Fixed
+
+- Normalize Kalasha (`kls`) U+2019 and U+2018 word/accent markers to ASCII
+  backticks without applying directional single-quote spacing.
+- Repair the narrow spacing signatures previously introduced around those
+  Kalasha markers while leaving other languages and straight quotes unchanged.
+
+### Verification
+
+- Added `.tstudio` regression coverage for `b’hi`, `bis’gai`, `d‘i`, and
+  `Mul‘awa`, including exact backtick output and reported normalization counts.
+- Existing Arabic-derived quote direction, embedded English quote preservation,
+  control cleanup, chunk structure, verse numbering, and second-pass behavior
+  remain covered by the full regression suite.
+
 ## 0.2.5 - 2026-09-26
 
 ### Fixed

@@ -20,7 +20,9 @@ public sealed record UsfmCleanResult(
     int PendingLineDuplicateMarkersRemoved,
     int StrayLeadingVerseMarkersRemoved,
     int VisibleVerseMarkersNormalized,
+    int TitleParagraphMarkersRemoved,
     int SpacingFixes,
+    int KalashaAccentMarkersNormalized,
     int StraightQuotesConverted,
     int StraightSingleQuotesConverted,
     int DirectionalDoubleQuotesRepaired,
@@ -29,6 +31,7 @@ public sealed record UsfmCleanResult(
     int DirectSpeechFixes,
     int ByteOrderMarksRemoved,
     int UnsafeControlCharsRemoved,
+    int FinderMetadataFilesRemoved,
     int StructuralChunkFilesRemoved,
     int ManifestFinishedChunksRemoved,
     int VerificationIssueCount,
@@ -86,6 +89,10 @@ public static class UsfmProjectCleanerService
     private static readonly Regex UsfmChapterMarkerRegex = new(
         @"(?<!\S)\\c\s+\d+\s*",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex StandaloneTitleParagraphMarkerRegex = new(
+        @"(?m)^[ \t]*\\p[ \t]*(?:\r?\n|$)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly Regex UsfmVerseMarkerRegex = new(
         @"(?<!\S)\\v\s*\d+\s*",
@@ -188,6 +195,7 @@ public static class UsfmProjectCleanerService
         try
         {
             ZipFile.ExtractToDirectory(inputPath, tempRoot);
+            stats.FinderMetadataFilesRemoved = RemoveFinderMetadataFiles(tempRoot);
             var chunkLayoutWarnings = FindTstudioChunkLayoutWarnings(tempRoot, canonProfile);
             ThrowIfTstudioIsContaminated(tempRoot, canonProfile);
             var sourceContextsByProjectRoot = LoadSourceContexts(tempRoot, sourceTextRoot);
@@ -277,6 +285,19 @@ public static class UsfmProjectCleanerService
         }
 
         return repairs;
+    }
+
+    private static int RemoveFinderMetadataFiles(string tempRoot)
+    {
+        var removed = 0;
+        foreach (var filePath in Directory.EnumerateFiles(tempRoot, "*", SearchOption.AllDirectories)
+                     .Where(path => string.Equals(Path.GetFileName(path), ".DS_Store", StringComparison.Ordinal)))
+        {
+            File.Delete(filePath);
+            removed++;
+        }
+
+        return removed;
     }
 
     private static void ThrowIfTstudioIsContaminated(string tempRoot, CanonProfile canonProfile)
@@ -806,7 +827,9 @@ public static class UsfmProjectCleanerService
             $"Duplicate visible verse markers removed: {result.InlineDuplicateMarkersRemoved + result.PendingLineDuplicateMarkersRemoved}",
             $"Stray leading verse markers removed: {result.StrayLeadingVerseMarkersRemoved}",
             $"Visible reversed/loose verse markers normalized: {result.VisibleVerseMarkersNormalized}",
-            $"Punctuation/parenthesis spacing fixes: {result.SpacingFixes}",
+            $"Title paragraph markers removed: {result.TitleParagraphMarkersRemoved}",
+            $"Text lines with punctuation/spacing normalization: {result.SpacingFixes}",
+            $"Kalasha accent markers normalized to backticks: {result.KalashaAccentMarkersNormalized}",
             $"Straight English quotes converted: {result.StraightQuotesConverted}",
             $"Straight English single quotes converted: {result.StraightSingleQuotesConverted}",
             $"Directional double quotes repaired: {result.DirectionalDoubleQuotesRepaired}",
@@ -815,6 +838,7 @@ public static class UsfmProjectCleanerService
             $"Source-checked direct speech fixes: {result.DirectSpeechFixes}",
             $"Unicode BOM markers removed: {result.ByteOrderMarksRemoved}",
             $"Unsafe control characters removed: {result.UnsafeControlCharsRemoved}",
+            $"Finder metadata files removed: {result.FinderMetadataFilesRemoved}",
             $"Structural chunk files removed: {result.StructuralChunkFilesRemoved}",
             $"Manifest finished_chunks removed: {result.ManifestFinishedChunksRemoved}",
             $"Verification issues after cleaning: {result.VerificationIssueCount}",
@@ -925,6 +949,12 @@ public static class UsfmProjectCleanerService
         {
             return text;
         }
+
+        text = StandaloneTitleParagraphMarkerRegex.Replace(text, _ =>
+        {
+            stats.TitleParagraphMarkersRemoved++;
+            return string.Empty;
+        }).TrimEnd();
 
         var match = LeadingNumberRegex.Match(text);
         if (!match.Success || match.Groups[2].Value.Length == 0)
@@ -1327,6 +1357,11 @@ public static class UsfmProjectCleanerService
             return string.Empty;
         });
 
+        if (UsesKalashaAccentConvention(targetLanguageId))
+        {
+            text = NormalizeKalashaAccentMarkers(text, stats);
+        }
+
         text = NormalizeVerseMarkerWordJoinerResidue(text, stats);
         text = StripBidiControlCharacters(text, stats);
 
@@ -1404,6 +1439,45 @@ public static class UsfmProjectCleanerService
         return quoteSpaced;
     }
 
+    private static string NormalizeKalashaAccentMarkers(string text, CleanStats stats)
+    {
+        var markerCount = text.Count(ch => ch is '’' or '‘');
+        if (markerCount == 0)
+        {
+            return text;
+        }
+
+        // Undo only the spacing signatures previously introduced by the
+        // directional-quote normalizer before converting the Kalasha marker.
+        text = Regex.Replace(
+            text,
+            @"(?<=[\p{L}\p{M}\p{N}])\s+[’‘](?=[\p{L}\p{M}\p{N}])",
+            "`",
+            RegexOptions.CultureInvariant);
+        text = Regex.Replace(
+            text,
+            @"(?<=[\p{L}\p{M}\p{N}])‘\s+(?=[\p{L}\p{M}\p{N}])",
+            "`",
+            RegexOptions.CultureInvariant);
+        text = text.Replace('’', '`').Replace('‘', '`');
+        stats.KalashaAccentMarkersNormalized += markerCount;
+        return text;
+    }
+
+    private static bool UsesKalashaAccentConvention(string? targetLanguageId)
+    {
+        if (string.IsNullOrWhiteSpace(targetLanguageId))
+        {
+            return false;
+        }
+
+        var subtags = targetLanguageId.Trim()
+            .Replace('_', '-')
+            .Split('-', StringSplitOptions.RemoveEmptyEntries);
+        return subtags.Length > 0
+            && string.Equals(subtags[0], "kls", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string NormalizeVerseMarkerWordJoinerResidue(string text, CleanStats stats)
     {
         return VerseMarkerWordJoinerResidueRegex.Replace(text, match =>
@@ -1432,11 +1506,16 @@ public static class UsfmProjectCleanerService
                 continue;
             }
 
-            output.Add(string.Join(
+            var normalizedLine = string.Join(
                 " ",
-                segments.Select(segment => $"{match.Groups[1].Value}{segment.Number}{match.Groups[3].Value}{segment.Text}")));
+                segments.Select(segment => $"{match.Groups[1].Value}{segment.Number}{match.Groups[3].Value}{segment.Text}"));
 
-            stats.VisibleVerseMarkersNormalized += segments.Count - 1;
+            output.Add(normalizedLine);
+
+            if (!string.Equals(normalizedLine, line, StringComparison.Ordinal))
+            {
+                stats.VisibleVerseMarkersNormalized += segments.Count - 1;
+            }
         }
 
         return string.Join(lineBreak, output);
@@ -2191,7 +2270,9 @@ public static class UsfmProjectCleanerService
         public int PendingLineDuplicateMarkersRemoved { get; set; }
         public int StrayLeadingVerseMarkersRemoved { get; set; }
         public int VisibleVerseMarkersNormalized { get; set; }
+        public int TitleParagraphMarkersRemoved { get; set; }
         public int SpacingFixes { get; set; }
+        public int KalashaAccentMarkersNormalized { get; set; }
         public int StraightQuotesConverted { get; set; }
         public int StraightSingleQuotesConverted { get; set; }
         public int DirectionalDoubleQuotesRepaired { get; set; }
@@ -2200,6 +2281,7 @@ public static class UsfmProjectCleanerService
         public int DirectSpeechFixes { get; set; }
         public int ByteOrderMarksRemoved { get; set; }
         public int UnsafeControlCharsRemoved { get; set; }
+        public int FinderMetadataFilesRemoved { get; set; }
         public int StructuralChunkFilesRemoved { get; set; }
         public int ManifestFinishedChunksRemoved { get; set; }
 
@@ -2220,7 +2302,9 @@ public static class UsfmProjectCleanerService
                 PendingLineDuplicateMarkersRemoved,
                 StrayLeadingVerseMarkersRemoved,
                 VisibleVerseMarkersNormalized,
+                TitleParagraphMarkersRemoved,
                 SpacingFixes,
+                KalashaAccentMarkersNormalized,
                 StraightQuotesConverted,
                 StraightSingleQuotesConverted,
                 DirectionalDoubleQuotesRepaired,
@@ -2229,6 +2313,7 @@ public static class UsfmProjectCleanerService
                 DirectSpeechFixes,
                 ByteOrderMarksRemoved,
                 UnsafeControlCharsRemoved,
+                FinderMetadataFilesRemoved,
                 StructuralChunkFilesRemoved,
                 ManifestFinishedChunksRemoved,
                 verificationIssues.Count,

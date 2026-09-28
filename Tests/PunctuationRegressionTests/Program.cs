@@ -19,6 +19,7 @@ var cases = new (string Name, string Input, string Expected)[]
     ("question plus ASCII full stop", "کیتے؟.", "کیتے؟"),
     ("exclamation plus Urdu full stop", "کیتے!۔", "کیتے!"),
     ("exclamation plus ASCII full stop", "کیتے!.", "کیتے!"),
+    ("exact doubled period while preserving ellipsis", "Sentence.. Wait...", "Sentence. Wait..."),
     ("verse marker with Urdu full stop", "\\v 12۔ سارے حیران", "\\v 12 سارے حیران"),
     ("verse marker with ASCII full stop", "\\v 12. سارے حیران", "\\v 12 سارے حیران"),
     ("verse marker with no space after punctuation", "\\v 6۔جیہڑے", "\\v 6 جیہڑے"),
@@ -295,9 +296,13 @@ try
         }
         """,
         new UTF8Encoding(false));
-    const string klsChunkInput = "\\v 28\u2060He said, \"Peace.\" \\v 29 \u2060 \u2060Next verse.";
-    const string klsChunkExpected = "\\v 28 He said, \"Peace.\" \\v 29 Next verse.";
+    const string klsChunkInput = "\\v 28\u2060b’hi bis’gai d‘i Mul‘awa moc ’ai drac‘ ui. \\v 29 \u2060 \u2060He said, \"Peace.\"";
+    const string klsChunkExpected = "\\v 28 b`hi bis`gai d`i Mul`awa moc`ai drac`ui. \\v 29 He said, \"Peace.\"";
     File.WriteAllText(Path.Combine(klsChapterRoot, "28.txt"), klsChunkInput, new UTF8Encoding(false));
+    File.WriteAllText(Path.Combine(klsChapterRoot, "title.txt"), "Bas` 8\n\\p", new UTF8Encoding(false));
+    File.WriteAllBytes(Path.Combine(sourceRoot, ".DS_Store"), [0x00, 0x01, 0x02]);
+    File.WriteAllBytes(Path.Combine(klsChapterRoot, ".DS_Store"), [0x03, 0x04, 0x05]);
+    File.WriteAllBytes(Path.Combine(klsChapterRoot, "._preserve"), [0x06, 0x07, 0x08]);
 
     var explicitSourceRoot = Path.Combine(tempRoot, "configured-source");
     Directory.CreateDirectory(explicitSourceRoot);
@@ -350,6 +355,52 @@ try
     if (!string.Equals(ReadEntry(cleanedArchive, "kls_jhn_text_ulb/08/28.txt"), klsChunkExpected, StringComparison.Ordinal))
     {
         failures.Add("word-joiner cleaning: kls verse-marker residue was not removed or straight quotes were unexpectedly converted");
+    }
+
+    if (!string.Equals(ReadEntry(cleanedArchive, "kls_jhn_text_ulb/08/title.txt"), "Bas` 8", StringComparison.Ordinal)
+        || sourceAwareResult.TitleParagraphMarkersRemoved != 1)
+    {
+        failures.Add($"chapter-title cleaning: standalone paragraph marker was not removed exactly once; reported {sourceAwareResult.TitleParagraphMarkersRemoved}");
+    }
+
+    if (sourceAwareResult.VisibleVerseMarkersNormalized != 0)
+    {
+        failures.Add($"verse-marker reporting: canonical markers were falsely counted as {sourceAwareResult.VisibleVerseMarkersNormalized} normalization(s)");
+    }
+
+    if (sourceAwareResult.KalashaAccentMarkersNormalized != 6)
+    {
+        failures.Add($"Kalasha accent normalization: expected six curly markers converted to backticks, got {sourceAwareResult.KalashaAccentMarkersNormalized}");
+    }
+
+    if (sourceAwareResult.FinderMetadataFilesRemoved != 2
+        || cleanedArchive.GetEntry(".DS_Store") is not null
+        || cleanedArchive.GetEntry("kls_jhn_text_ulb/08/.DS_Store") is not null)
+    {
+        failures.Add($"Finder metadata cleanup: expected two exact .DS_Store removals, got {sourceAwareResult.FinderMetadataFilesRemoved}");
+    }
+
+    var preservedHiddenEntry = cleanedArchive.GetEntry("kls_jhn_text_ulb/08/._preserve");
+    if (preservedHiddenEntry is null || !ReadEntryBytes(preservedHiddenEntry).SequenceEqual(new byte[] { 0x06, 0x07, 0x08 }))
+    {
+        failures.Add("Finder metadata cleanup: non-target hidden file was removed or changed");
+    }
+
+    var secondOutputProject = Path.Combine(tempRoot, "output-second.tstudio");
+    var secondPassResult = UsfmProjectCleanerService.Clean(
+        outputProject,
+        secondOutputProject,
+        CanonProfile.ProtestantNt,
+        explicitSourceRoot);
+    using var secondCleanedArchive = ZipFile.OpenRead(secondOutputProject);
+    if (!string.Equals(ReadEntry(secondCleanedArchive, "kls_jhn_text_ulb/08/28.txt"), klsChunkExpected, StringComparison.Ordinal)
+        || secondPassResult.KalashaAccentMarkersNormalized != 0
+        || secondPassResult.TitleParagraphMarkersRemoved != 0
+        || secondPassResult.FinderMetadataFilesRemoved != 0
+        || secondPassResult.VisibleVerseMarkersNormalized != 0
+        || secondPassResult.FilesChanged != 0)
+    {
+        failures.Add($"Kalasha accent normalization idempotence: second pass changed {secondPassResult.FilesChanged} file(s) and normalized {secondPassResult.KalashaAccentMarkersNormalized} marker(s)");
     }
 
     if (sourceAwareResult.UnsafeControlCharsRemoved != 3)
@@ -922,6 +973,14 @@ static string ReadEntry(ZipArchive archive, string entryName)
         ?? throw new InvalidDataException($"Missing test archive entry: {entryName}");
     using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
     return reader.ReadToEnd();
+}
+
+static byte[] ReadEntryBytes(ZipArchiveEntry entry)
+{
+    using var stream = entry.Open();
+    using var buffer = new MemoryStream();
+    stream.CopyTo(buffer);
+    return buffer.ToArray();
 }
 
 static void WriteTestManifest(string projectRoot, string bookId, string finishedChunk)

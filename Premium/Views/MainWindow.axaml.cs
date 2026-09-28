@@ -549,8 +549,10 @@ public partial class MainWindow : Window
                 $"Files changed: {result.FilesChanged}{Environment.NewLine}" +
                 $"Duplicate visible verse markers removed: {result.InlineDuplicateMarkersRemoved + result.PendingLineDuplicateMarkersRemoved}{Environment.NewLine}" +
                 $"Visible reversed/loose verse markers normalized: {result.VisibleVerseMarkersNormalized}{Environment.NewLine}" +
+                $"Title paragraph markers removed: {result.TitleParagraphMarkersRemoved}{Environment.NewLine}" +
                 $"Stray leading verse markers removed: {result.StrayLeadingVerseMarkersRemoved}{Environment.NewLine}" +
-                $"Punctuation/parenthesis spacing fixes: {result.SpacingFixes}{Environment.NewLine}" +
+                $"Text lines with punctuation/spacing normalization: {result.SpacingFixes}{Environment.NewLine}" +
+                $"Kalasha accent markers normalized to backticks: {result.KalashaAccentMarkersNormalized}{Environment.NewLine}" +
                 $"Straight English quotes converted: {result.StraightQuotesConverted}{Environment.NewLine}" +
                 $"Straight English single quotes converted: {result.StraightSingleQuotesConverted}{Environment.NewLine}" +
                 $"Directional double quotes repaired: {result.DirectionalDoubleQuotesRepaired}{Environment.NewLine}" +
@@ -558,6 +560,7 @@ public partial class MainWindow : Window
                 $"Unpaired double quote closers repaired: {result.UnpairedDoubleQuoteClosersRepaired}{Environment.NewLine}" +
                 $"Unicode BOM markers removed: {result.ByteOrderMarksRemoved}{Environment.NewLine}" +
                 $"Unsafe control characters removed: {result.UnsafeControlCharsRemoved}{Environment.NewLine}" +
+                $"Finder metadata files removed: {result.FinderMetadataFilesRemoved}{Environment.NewLine}" +
                 $"Structural chunk files removed: {result.StructuralChunkFilesRemoved}{Environment.NewLine}" +
                 $"Manifest finished_chunks removed: {result.ManifestFinishedChunksRemoved}{Environment.NewLine}" +
                 $"Post-clean verification issues: {result.VerificationIssueCount}";
@@ -567,7 +570,7 @@ public partial class MainWindow : Window
         Vm.Issues.Add(new IssueItem(
                 "Info",
                 "USFM_PROJECT_CLEANED",
-                $"Removed {result.InlineDuplicateMarkersRemoved + result.PendingLineDuplicateMarkersRemoved} duplicate visible verse marker artifact(s), normalized {result.VisibleVerseMarkersNormalized} reversed/loose verse marker(s), removed {result.StrayLeadingVerseMarkersRemoved} stray leading verse marker(s), removed {result.ByteOrderMarksRemoved} Unicode BOM marker(s), removed {result.UnsafeControlCharsRemoved} unsafe control character(s), removed {result.StructuralChunkFilesRemoved} impossible chunk file(s), removed {result.ManifestFinishedChunksRemoved} impossible manifest reference(s), converted {result.StraightQuotesConverted} double quote(s), {result.StraightSingleQuotesConverted} single quote(s), repaired {result.DirectionalDoubleQuotesRepaired + result.DirectionalSingleQuotesRepaired + result.UnpairedDoubleQuoteClosersRepaired} directional quote(s), and wrote report: {result.ReportPath}.",
+                $"Removed {result.InlineDuplicateMarkersRemoved + result.PendingLineDuplicateMarkersRemoved} duplicate visible verse marker artifact(s), normalized {result.VisibleVerseMarkersNormalized} reversed/loose verse marker(s), removed {result.TitleParagraphMarkersRemoved} title paragraph marker(s), removed {result.StrayLeadingVerseMarkersRemoved} stray leading verse marker(s), removed {result.ByteOrderMarksRemoved} Unicode BOM marker(s), removed {result.UnsafeControlCharsRemoved} unsafe control character(s), removed {result.FinderMetadataFilesRemoved} Finder metadata file(s), removed {result.StructuralChunkFilesRemoved} impossible chunk file(s), removed {result.ManifestFinishedChunksRemoved} impossible manifest reference(s), normalized {result.KalashaAccentMarkersNormalized} Kalasha accent marker(s), converted {result.StraightQuotesConverted} double quote(s), {result.StraightSingleQuotesConverted} single quote(s), repaired {result.DirectionalDoubleQuotesRepaired + result.DirectionalSingleQuotesRepaired + result.UnpairedDoubleQuoteClosersRepaired} directional quote(s), and wrote report: {result.ReportPath}.",
                 Vm.Issues.Count + 1,
                 "USFM Cleaner"));
         foreach (var warning in result.VerificationIssues.Where(issue =>
