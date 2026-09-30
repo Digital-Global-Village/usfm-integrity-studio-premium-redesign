@@ -753,6 +753,8 @@ finally
 }
 
 DocxDetectionTests.Run(appAssembly, failures);
+OtVersificationTests.Run(appAssembly, failures);
+
 PrivateDocxAcceptance.Run(appAssembly, failures);
 
 if (failures.Count > 0)

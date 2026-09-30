@@ -53,7 +53,7 @@ internal static class DocxToUsfmConverter
         @"^\\v\s*([0-9\u0660-\u0669\u06F0-\u06F9]{1,3})\s*[\\.)۔:]?\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly Regex PlainVerseMarkerOnlyRegex = new(
-        @"^([0-9\u0660-\u0669\u06F0-\u06F9]{1,3})\s*[.)۔:]\s*$",
+        @"^([0-9\u0660-\u0669\u06F0-\u06F9]{1,3})\s*[.)۔:]?\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly Regex UsfmVerseInlineRegex = new(
         @"^\\v\s*([0-9\u0660-\u0669\u06F0-\u06F9]{1,3})(?![0-9\u0660-\u0669\u06F0-\u06F9])\s*[\\.)۔:]?\s*(.+)$",

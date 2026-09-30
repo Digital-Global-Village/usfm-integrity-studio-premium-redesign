@@ -4,6 +4,31 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+## 0.2.9 - 2026-09-30
+
+### Fixed
+
+- Use one BTTW-compatible English Protestant OT verse-count profile for DOCX
+  scanning, standardization, and conversion validation across all 39 OT books.
+- Accept Song of Solomon 6:13 while continuing to reject verses beyond the
+  selected BTTW-compatible chapter ceiling.
+- Read standalone numeric verse paragraphs as complete verse markers, preserving
+  multi-digit numbers and attaching subsequent text to the correct verse.
+- Recognize uppercase `\\V` verse markers during scanning and normalize them to
+  canonical lowercase `\\v` markers in standardized DOCX copies.
+
+### Verification
+
+- Added full-profile checks for 39 books, 929 chapters, and 23,145 verses.
+- Added SNG 6:13 acceptance, SNG 6:14 rejection, uppercase-marker, idempotence,
+  and unchanged NT-versification regression coverage.
+- Existing regression suite passed, including punctuation, RTL quote handling,
+  project cleaning, chunk mapping, and non-destructive duplicate blocking.
+
+- Added standalone multi-digit verse-number and continuation-text coverage.
+- Verified the supplied SNG document produces all 117 verses in 8 chapters and
+  a valid BTTW project package without duplicate or unmapped-paragraph findings.
+
 ## 0.2.8 - 2026-09-28
 
 ### Fixed

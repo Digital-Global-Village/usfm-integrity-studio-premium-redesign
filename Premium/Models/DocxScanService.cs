@@ -43,7 +43,7 @@ internal static class DocxScanService
 
     private static readonly Regex VerseLeadRegex = new(
         @"^(?:\\v\s*)?([0-9\u0660-\u0669\u06F0-\u06F9]{1,3})\b",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly Regex GenericTranslationLabelRegex = new(
         "^(?:سرائیکی\\s*ترجمہ|اُردو\\s*ترجمہ|اردو\\s*ترجمہ|translation)$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
@@ -470,6 +470,12 @@ internal static class DocxScanService
                         }
 
                         var paragraphChanged = false;
+                        if (NormalizeExplicitVerseMarkerCase(paragraph))
+                        {
+                            paragraphText = NormalizeWhitespace(ExtractText(paragraph)).Trim();
+                            changedTextNodeCount++;
+                            paragraphChanged = true;
+                        }
                         if (TryNormalizeChapterLabel(paragraph))
                         {
                             paragraphText = NormalizeWhitespace(ExtractText(paragraph)).Trim();
@@ -1163,6 +1169,25 @@ internal static class DocxScanService
         return true;
     }
 
+    private static bool NormalizeExplicitVerseMarkerCase(XElement paragraph)
+    {
+        var nodes = paragraph.Descendants(W + "t").ToList();
+        var text = string.Concat(nodes.Select(node => node.Value));
+        var match = Regex.Match(text, @"^\s*\\V(?=\s*[0-9\u0660-\u0669\u06F0-\u06F9]{1,3}\b)", RegexOptions.CultureInvariant);
+        if (!match.Success) return false;
+        var offset = match.Index + match.Length - 1;
+        foreach (var node in nodes)
+        {
+            if (offset < node.Value.Length)
+            {
+                node.Value = node.Value[..offset] + "v" + node.Value[(offset + 1)..];
+                return true;
+            }
+            offset -= node.Value.Length;
+        }
+        return false;
+    }
+
     private static bool IsStandaloneVerseMarkerParagraph(string paragraphText)
     {
         if (string.IsNullOrWhiteSpace(paragraphText))
@@ -1173,7 +1198,7 @@ internal static class DocxScanService
         return Regex.IsMatch(
             paragraphText.Trim(),
             @"^\\v\s+[\d\u0660-\u0669\u06F0-\u06F9]{1,3}\s*$",
-            RegexOptions.CultureInvariant);
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     }
 
     private static int TryGetExpectedVerseCount(VersificationProfile versification, string? bookId, int chapter)
@@ -1356,9 +1381,9 @@ internal static class DocxScanService
                 CommonNtVerseCounts,
                 new HashSet<string>(StringComparer.Ordinal)),
             _ => new VersificationProfile(
-                "protestant-ot-v1",
-                "Protestant OT versification (v1)",
-                ProtestantOtVerseCounts,
+                "bttw-en-US-v1",
+                "BTTW English Protestant OT versification (v1)",
+                BttwEnglishVersification.OldTestamentVerseCounts,
                 new HashSet<string>(StringComparer.Ordinal))
         };
     }

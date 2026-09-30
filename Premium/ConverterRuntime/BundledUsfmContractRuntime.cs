@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using UsfmConverter.Contracts;
+using UsfmIntegrityStudio.Models;
 
 
 namespace UsfmIntegrityStudio.ConverterRuntime;
@@ -292,7 +293,7 @@ internal static class BundledUsfmContractRuntime
 
         var result = DocxToUsfmConverter.Convert(inputDocxPath, mode, canonToken, onlyBookIds, preserveVerseMarkers);
 
-        ValidateSelectedBookVersification(result.Lines, onlyBookIds);
+        ValidateSelectedBookVersification(result.Lines, onlyBookIds, canonToken);
 
         if (result.Lines.Count > 0)
         {
@@ -656,7 +657,7 @@ internal static class BundledUsfmContractRuntime
         return files;
     }
 
-    static void ValidateSelectedBookVersification(IReadOnlyList<string> lines, IReadOnlySet<string>? onlyBookIds)
+    static void ValidateSelectedBookVersification(IReadOnlyList<string> lines, IReadOnlySet<string>? onlyBookIds, string canonToken)
     {
         if (onlyBookIds is not { Count: 1 } || lines.Count == 0)
         {
@@ -671,6 +672,13 @@ internal static class BundledUsfmContractRuntime
             return;
         }
 
+        var counts = chapterLimits.EnumerateArray().Select(value => int.Parse(value.GetString()!)).ToArray();
+        if (string.Equals(canonToken, "protestant-ot", StringComparison.OrdinalIgnoreCase)
+            && BttwEnglishVersification.TryGetChapterVerseCounts(selectedBookId, out var englishCounts))
+        {
+            counts = englishCounts;
+        }
+
         var currentChapter = 0;
         foreach (var line in lines)
         {
@@ -678,7 +686,7 @@ internal static class BundledUsfmContractRuntime
             if (chapterMatch.Success)
             {
                 currentChapter = int.Parse(chapterMatch.Groups[1].Value);
-                if (currentChapter < 1 || currentChapter > chapterLimits.GetArrayLength())
+                if (currentChapter < 1 || currentChapter > counts.Length)
                 {
                     throw new InvalidOperationException(
                         $"Selected book {selectedBookId} has no chapter {currentChapter}. Conversion stopped before writing mislabeled scripture content.");
@@ -693,7 +701,7 @@ internal static class BundledUsfmContractRuntime
             foreach (Match verseMatch in Regex.Matches(line, @"\\v\s+(\d+)(?:\s*[-\u2013]\s*(\d+))?\b", RegexOptions.IgnoreCase))
             {
                 var lastVerse = int.Parse(verseMatch.Groups[2].Success ? verseMatch.Groups[2].Value : verseMatch.Groups[1].Value);
-                var maxVerse = int.Parse(chapterLimits[currentChapter - 1].GetString()!);
+                var maxVerse = counts[currentChapter - 1];
                 if (lastVerse > maxVerse)
                 {
                     throw new InvalidOperationException(
