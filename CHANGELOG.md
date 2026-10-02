@@ -4,6 +4,12 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+### Build
+
+- Move macOS release packaging from the retiring macOS 14 GitHub runner to
+  macOS 15, retaining Apple Silicon and Intel package targets. Application
+  behavior and existing released packages are unchanged.
+
 ## 0.2.9 - 2026-09-30
 
 ### Fixed
