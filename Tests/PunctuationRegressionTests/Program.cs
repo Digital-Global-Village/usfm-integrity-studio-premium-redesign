@@ -6,6 +6,16 @@ using UsfmIntegrityStudio.Models;
 using UsfmIntegrityStudio.ViewModels;
 using UsfmTools.Text;
 
+if (args.Contains("--cleaner-spacing-only"))
+{
+    var focusedFailures = new List<string>();
+    CleanerSpacingTests.Run(focusedFailures);
+    CleanerAuditTests.Run(focusedFailures);
+    foreach (var failure in focusedFailures) Console.Error.WriteLine(failure);
+    Environment.ExitCode = focusedFailures.Count == 0 ? 0 : 1;
+    return;
+}
+
 var cases = new (string Name, string Input, string Expected)[]
 {
     ("space before sentence punctuation", "لفظ !", "لفظ!"),
@@ -754,6 +764,8 @@ finally
 
 DocxDetectionTests.Run(appAssembly, failures);
 OtVersificationTests.Run(appAssembly, failures);
+CleanerSpacingTests.Run(failures);
+CleanerAuditTests.Run(failures);
 
 PrivateDocxAcceptance.Run(appAssembly, failures);
 

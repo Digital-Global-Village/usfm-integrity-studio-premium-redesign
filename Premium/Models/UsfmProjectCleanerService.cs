@@ -37,7 +37,12 @@ public sealed record UsfmCleanResult(
     int VerificationIssueCount,
     string ReportPath,
     IReadOnlyList<string> StructuralRepairs,
-    IReadOnlyList<string> VerificationIssues);
+    IReadOnlyList<string> VerificationIssues)
+{
+    public IReadOnlyList<UrduWordCorrection> UrduWordCorrections { get; init; } = Array.Empty<UrduWordCorrection>();
+    public IReadOnlyList<CleanerFinding> Findings { get; init; } = Array.Empty<CleanerFinding>();
+    public IReadOnlyList<string> SourceComparisonProjects { get; init; } = Array.Empty<string>();
+}
 
 internal sealed record TstudioManifest(string ProjectId, string ProjectName, string ResourceName, string Format, string? TargetLanguageId);
 
@@ -46,7 +51,7 @@ internal readonly record struct VerseSegment(int Number, string Text);
 public static class UsfmProjectCleanerService
 {
     private const string BttwGeneratorName = "ts-desktop";
-    private const string BttwModifiedBuild = "1073x";
+    private const string BttwModifiedBuild = "1074";
 
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
@@ -163,11 +168,13 @@ public static class UsfmProjectCleanerService
     private static UsfmCleanResult CleanTextFile(string inputPath, string outputPath)
     {
         var stats = new CleanStats();
+        stats.Audit.Path = Path.GetFileName(inputPath);
         var (text, hadBom) = ReadCleanableText(inputPath, stats);
         var cleaned = CleanText(text, stats);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? Directory.GetCurrentDirectory());
         File.WriteAllText(outputPath, cleaned, Utf8NoBom);
 
+        stats.Audit.Review(cleaned);
         var verificationIssues = VerifyCleanText(cleaned, outputPath);
         var result = stats.ToResult(
             inputPath,
@@ -195,22 +202,28 @@ public static class UsfmProjectCleanerService
         try
         {
             ZipFile.ExtractToDirectory(inputPath, tempRoot);
-            stats.FinderMetadataFilesRemoved = RemoveFinderMetadataFiles(tempRoot);
+            stats.FinderMetadataFilesRemoved = RemoveFinderMetadataFiles(tempRoot, stats);
             var chunkLayoutWarnings = FindTstudioChunkLayoutWarnings(tempRoot, canonProfile);
             ThrowIfTstudioIsContaminated(tempRoot, canonProfile);
             var sourceContextsByProjectRoot = LoadSourceContexts(tempRoot, sourceTextRoot);
+            stats.SourceComparisonProjects = sourceContextsByProjectRoot.Keys.Select(path => Path.GetRelativePath(tempRoot, path)).ToArray();
             var targetLanguagesByProjectRoot = LoadTargetLanguages(tempRoot);
+            var wordCorrections = new List<UrduWordCorrection>();
 
             foreach (var filePath in Directory.EnumerateFiles(tempRoot, "*", SearchOption.AllDirectories)
                          .Where(IsCleanableTextFile))
             {
                 filesScanned++;
+                stats.Audit.Path = Path.GetRelativePath(tempRoot, filePath);
                 var (original, hadBom) = ReadCleanableText(filePath, stats);
                 var cleaned = CleanText(original, stats, FindTargetLanguage(filePath, targetLanguagesByProjectRoot));
-                cleaned = RemoveLeadingOutOfChunkVerseMarker(filePath, cleaned, stats);
-                cleaned = CleanDirectSpeechAgainstSource(filePath, cleaned, sourceContextsByProjectRoot, stats);
+                cleaned = stats.Track("Stray leading verse marker removal", cleaned, () => RemoveLeadingOutOfChunkVerseMarker(filePath, cleaned, stats));
+                cleaned = stats.Track("Source-checked direct speech repair", cleaned, () => CleanDirectSpeechAgainstSource(filePath, cleaned, sourceContextsByProjectRoot, stats));
                 cleaned = CleanTstudioChunkText(filePath, cleaned, stats);
-                cleaned = CleanTstudioTitleText(filePath, cleaned, stats);
+                cleaned = stats.Track("Chapter/title marker cleanup", cleaned, () => CleanTstudioTitleText(filePath, cleaned, stats));
+                if (Regex.IsMatch(Path.GetRelativePath(tempRoot, filePath).Replace('\\', '/'), @"/(?:\d+|front)/[^/]+\.txt$"))
+                    cleaned = UrduWordNormalizer.Normalize(cleaned, FindTargetLanguage(filePath, targetLanguagesByProjectRoot), Path.GetRelativePath(tempRoot, filePath), wordCorrections);
+                stats.Audit.Review(cleaned);
                 if (hadBom || !string.Equals(original, cleaned, StringComparison.Ordinal))
                 {
                     filesChanged++;
@@ -219,7 +232,7 @@ public static class UsfmProjectCleanerService
             }
 
             var structuralRepairs = RepairTstudioStructure(tempRoot, canonProfile, stats)
-                .Concat(StampTstudioGeneratorBuild(tempRoot))
+                .Concat(StampTstudioGeneratorBuild(tempRoot, stats))
                 .ToList();
             var verificationIssues = chunkLayoutWarnings
                 .Concat(VerifyTstudioStructure(tempRoot, canonProfile))
@@ -243,6 +256,7 @@ public static class UsfmProjectCleanerService
             }
 
             var result = stats.ToResult(inputPath, outputPath, filesScanned, filesChanged, structuralRepairs, verificationIssues);
+            result = result with { UrduWordCorrections = wordCorrections.ToArray() };
             WriteReport(result);
             return result;
         }
@@ -287,13 +301,14 @@ public static class UsfmProjectCleanerService
         return repairs;
     }
 
-    private static int RemoveFinderMetadataFiles(string tempRoot)
+    private static int RemoveFinderMetadataFiles(string tempRoot, CleanStats stats)
     {
         var removed = 0;
         foreach (var filePath in Directory.EnumerateFiles(tempRoot, "*", SearchOption.AllDirectories)
                      .Where(path => string.Equals(Path.GetFileName(path), ".DS_Store", StringComparison.Ordinal)))
         {
             File.Delete(filePath);
+            stats.Audit.FileChange(Path.GetRelativePath(tempRoot, filePath), "Finder metadata file removal", ".DS_Store present", "File removed");
             removed++;
         }
 
@@ -707,7 +722,7 @@ public static class UsfmProjectCleanerService
             .FirstOrDefault();
     }
 
-    private static IReadOnlyList<string> StampTstudioGeneratorBuild(string tempRoot)
+    private static IReadOnlyList<string> StampTstudioGeneratorBuild(string tempRoot, CleanStats stats)
     {
         var repairs = new List<string>();
         var manifestPaths = new List<string>();
@@ -748,6 +763,7 @@ public static class UsfmProjectCleanerService
             File.WriteAllText(manifestPath, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Utf8NoBom);
 
             var relativePath = Path.GetRelativePath(tempRoot, manifestPath);
+            stats.Audit.FileChange(relativePath, "Generator metadata stamp", $"{originalName ?? "(missing)"} {originalBuild ?? "(missing)"}", $"{BttwGeneratorName} {BttwModifiedBuild}");
             repairs.Add($"Stamped BTTW generator metadata in {relativePath}: {BttwGeneratorName} {BttwModifiedBuild}");
         }
 
@@ -814,46 +830,7 @@ public static class UsfmProjectCleanerService
         return parts.Length == 2 && int.TryParse(parts[0], out chapter) && int.TryParse(parts[1], out verse);
     }
 
-    private static void WriteReport(UsfmCleanResult result)
-    {
-        var lines = new List<string>
-        {
-            "UIS Premium USFM/Project Cleaner Report",
-            $"Generated: {DateTimeOffset.Now:O}",
-            $"Input: {result.InputPath}",
-            $"Output: {result.OutputPath}",
-            $"Files scanned: {result.FilesScanned}",
-            $"Files changed: {result.FilesChanged}",
-            $"Duplicate visible verse markers removed: {result.InlineDuplicateMarkersRemoved + result.PendingLineDuplicateMarkersRemoved}",
-            $"Stray leading verse markers removed: {result.StrayLeadingVerseMarkersRemoved}",
-            $"Visible reversed/loose verse markers normalized: {result.VisibleVerseMarkersNormalized}",
-            $"Title paragraph markers removed: {result.TitleParagraphMarkersRemoved}",
-            $"Text lines with punctuation/spacing normalization: {result.SpacingFixes}",
-            $"Kalasha accent markers normalized to backticks: {result.KalashaAccentMarkersNormalized}",
-            $"Straight English quotes converted: {result.StraightQuotesConverted}",
-            $"Straight English single quotes converted: {result.StraightSingleQuotesConverted}",
-            $"Directional double quotes repaired: {result.DirectionalDoubleQuotesRepaired}",
-            $"Directional single quotes repaired: {result.DirectionalSingleQuotesRepaired}",
-            $"Unpaired double quote closers repaired: {result.UnpairedDoubleQuoteClosersRepaired}",
-            $"Source-checked direct speech fixes: {result.DirectSpeechFixes}",
-            $"Unicode BOM markers removed: {result.ByteOrderMarksRemoved}",
-            $"Unsafe control characters removed: {result.UnsafeControlCharsRemoved}",
-            $"Finder metadata files removed: {result.FinderMetadataFilesRemoved}",
-            $"Structural chunk files removed: {result.StructuralChunkFilesRemoved}",
-            $"Manifest finished_chunks removed: {result.ManifestFinishedChunksRemoved}",
-            $"Verification issues after cleaning: {result.VerificationIssueCount}",
-            string.Empty,
-            "Structural repairs:"
-        };
-
-        lines.AddRange(result.StructuralRepairs.Count > 0 ? result.StructuralRepairs.Select(item => "- " + item) : ["- none"]);
-        lines.Add(string.Empty);
-        lines.Add("Post-clean verification:");
-        lines.AddRange(result.VerificationIssues.Count > 0 ? result.VerificationIssues.Select(item => "- " + item) : ["- passed"]);
-
-        Directory.CreateDirectory(Path.GetDirectoryName(result.ReportPath) ?? Directory.GetCurrentDirectory());
-        File.WriteAllLines(result.ReportPath, lines, Utf8NoBom);
-    }
+    private static void WriteReport(UsfmCleanResult result) => CleanerSpacingAudit.Write(result);
 
     private static bool IsCleanableTextFile(string filePath)
     {
@@ -930,12 +907,15 @@ public static class UsfmProjectCleanerService
         }
 
         var cleaned = UsfmChapterMarkerRegex.Replace(text, string.Empty);
-        cleaned = StripBidiControlCharacters(cleaned, stats);
-        cleaned = RemoveVisibleVerseMarkersFromChunk(cleaned, startVerse, stats);
+        stats.Audit.Capture("Literal chapter marker removal", text, cleaned);
+        cleaned = stats.Track("Bidi control removal", cleaned, () => StripBidiControlCharacters(cleaned, stats));
+        cleaned = stats.Track("Duplicate visible verse-marker removal", cleaned, () => RemoveVisibleVerseMarkersFromChunk(cleaned, startVerse, stats));
 
-        return (ContainsArabicScript(cleaned)
+        var spaced = (ContainsArabicScript(cleaned)
             ? ScripturePunctuationNormalizer.NormalizeArabicDerivedSpacing(cleaned)
             : ScripturePunctuationNormalizer.NormalizeCommonSpacing(cleaned)).Trim();
+        stats.Audit.Capture("Chunk punctuation/spacing normalization", cleaned, spaced);
+        return spaced;
     }
 
     private static string CleanTstudioTitleText(string filePath, string text, CleanStats stats)
@@ -1237,6 +1217,7 @@ public static class UsfmProjectCleanerService
         if (hadBom)
         {
             stats.ByteOrderMarksRemoved++;
+            stats.Audit.FileChange(stats.Audit.Path, "Unicode BOM removal", "U+FEFF", "Removed");
             data = data[3..];
         }
 
@@ -1347,25 +1328,30 @@ public static class UsfmProjectCleanerService
     {
         if (text.StartsWith('\ufeff'))
         {
+            var beforeBom = text;
             text = text.TrimStart('\ufeff');
+            stats.Audit.Capture("Unicode BOM removal", beforeBom, text);
             stats.ByteOrderMarksRemoved++;
         }
 
+        var beforeControls = text;
         text = UnsafeControlCharRegex.Replace(text, match =>
         {
             stats.UnsafeControlCharsRemoved++;
             return string.Empty;
         });
 
+        stats.Audit.Capture("Unsafe control removal", beforeControls, text);
+
         if (UsesKalashaAccentConvention(targetLanguageId))
         {
-            text = NormalizeKalashaAccentMarkers(text, stats);
+            text = stats.Track("Kalasha accent normalization", text, () => NormalizeKalashaAccentMarkers(text, stats));
         }
 
-        text = NormalizeVerseMarkerWordJoinerResidue(text, stats);
-        text = StripBidiControlCharacters(text, stats);
+        text = stats.Track("Verse-marker word-joiner residue removal", text, () => NormalizeVerseMarkerWordJoinerResidue(text, stats));
+        text = stats.Track("Bidi control removal", text, () => StripBidiControlCharacters(text, stats));
 
-        text = NormalizeVisibleVerseMarkerArtifacts(text, stats);
+        text = stats.Track("Visible verse-marker normalization", text, () => NormalizeVisibleVerseMarkerArtifacts(text, stats));
 
         var cleaned = InlineDuplicateRegex.Replace(text, match =>
         {
@@ -1380,14 +1366,18 @@ public static class UsfmProjectCleanerService
             return $"{match.Groups[1].Value}{match.Groups[2].Value} ";
         });
 
+        stats.Audit.Capture("Duplicate visible verse-marker removal", text, cleaned);
         var lineBreak = cleaned.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         var lines = cleaned.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
         int? pendingVerseNumber = null;
+        var auditOffset = 0;
 
         for (var i = 0; i < lines.Length; i++)
         {
             var line = lines[i];
+            var originalLineLength = line.Length;
             var chapterTitle = ChapterTitleSpacingRegex.Replace(line, "$1 $2");
+            stats.Audit.Capture("Chapter title spacing", line, chapterTitle, cleaned, auditOffset);
             if (!string.Equals(chapterTitle, line, StringComparison.Ordinal))
             {
                 stats.SpacingFixes++;
@@ -1397,6 +1387,7 @@ public static class UsfmProjectCleanerService
             if (pendingVerseNumber is not null)
             {
                 var updated = CleanVerseBody(pendingVerseNumber.Value, line, out var changed);
+                stats.Audit.Capture("Duplicate visible verse-marker removal", line, updated, cleaned, auditOffset);
                 if (changed)
                 {
                     stats.PendingLineDuplicateMarkersRemoved++;
@@ -1414,6 +1405,10 @@ public static class UsfmProjectCleanerService
             var spaced = ContainsArabicScript(line)
                 ? ScripturePunctuationNormalizer.NormalizeArabicDerivedSpacing(line)
                 : ScripturePunctuationNormalizer.NormalizeCommonSpacing(line);
+            stats.Audit.Capture("Punctuation/spacing normalization", line, spaced, cleaned, auditOffset);
+            var beforeAdditionalSpacing = spaced;
+            spaced = CleanerSpacingAudit.Normalize(spaced);
+            stats.Audit.Capture("Punctuation/spacing normalization", beforeAdditionalSpacing, spaced, cleaned, auditOffset);
             if (!string.Equals(spaced, line, StringComparison.Ordinal))
             {
                 stats.SpacingFixes++;
@@ -1421,16 +1416,20 @@ public static class UsfmProjectCleanerService
             }
 
             lines[i] = line;
+            auditOffset += originalLineLength + lineBreak.Length;
         }
 
+        var beforeSplit = string.Join(lineBreak, lines);
         cleaned = SplitAnchoredUsfmVerseLines(lines, lineBreak, stats);
+        stats.Audit.Capture("Anchored verse-line normalization", beforeSplit, cleaned);
         var usesArabicQuoteConvention = UsesArabicQuoteConvention(cleaned, targetLanguageId);
-        cleaned = ConvertStraightQuotes(cleaned, stats, targetLanguageId);
-        cleaned = RepairDirectionalQuotes(cleaned, stats, usesArabicQuoteConvention);
-        cleaned = RepairUnpairedDoubleQuoteClosers(cleaned, stats);
+        cleaned = stats.Track("Straight quote conversion", cleaned, () => ConvertStraightQuotes(cleaned, stats, targetLanguageId));
+        cleaned = stats.Track("Directional quote repair", cleaned, () => RepairDirectionalQuotes(cleaned, stats, usesArabicQuoteConvention));
+        cleaned = stats.Track("Unpaired quote closer repair", cleaned, () => RepairUnpairedDoubleQuoteClosers(cleaned, stats));
         var quoteSpaced = usesArabicQuoteConvention
             ? ScripturePunctuationNormalizer.NormalizeArabicDerivedQuoteSpacing(cleaned)
             : ScripturePunctuationNormalizer.NormalizeDirectionalQuoteSpacing(cleaned);
+        stats.Audit.Capture("Quote spacing", cleaned, quoteSpaced);
         if (!string.Equals(quoteSpaced, cleaned, StringComparison.Ordinal))
         {
             stats.SpacingFixes++;
@@ -2266,6 +2265,14 @@ public static class UsfmProjectCleanerService
 
     private sealed class CleanStats
     {
+        public CleanerAuditTrail Audit { get; } = new();
+        public IReadOnlyList<string> SourceComparisonProjects { get; set; } = Array.Empty<string>();
+        public string Track(string stage, string before, Func<string> transform)
+        {
+            var after = transform();
+            Audit.Capture(stage, before, after);
+            return after;
+        }
         public int InlineDuplicateMarkersRemoved { get; set; }
         public int PendingLineDuplicateMarkersRemoved { get; set; }
         public int StrayLeadingVerseMarkersRemoved { get; set; }
@@ -2319,7 +2326,7 @@ public static class UsfmProjectCleanerService
                 verificationIssues.Count,
                 outputPath + ".report.txt",
                 structuralRepairs,
-                verificationIssues);
+                verificationIssues) { Findings = Audit.Findings.ToArray(), SourceComparisonProjects = SourceComparisonProjects };
         }
     }
 }

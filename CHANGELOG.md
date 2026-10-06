@@ -10,6 +10,54 @@ All notable changes to this project will be documented here.
   macOS 15, retaining Apple Silicon and Intel package targets. Application
   behavior and existing released packages are unchanged.
 
+## 0.2.11 - 2026-10-06
+
+### Changed
+
+- Replace the redesign logo with the supplied Digital Global Village artwork, resized to a lightweight 256-pixel PNG. This branding change does not modify cleaning or conversion behavior.
+- Shorten cleaner Activity log labels and show only output/report paths, changed files, review flags and validation issues.
+- Present HTML totals as left-label/right-count tables; widen Before/After excerpts, preserve highlighted Exact Edit cells, and sort locations numerically.
+- Separate technical repairs from punctuation and word corrections; remove the duplicated full TXT appendix from HTML while retaining the standalone TXT report.
+- Report verified chapter-marker deletions as complete tokens rather than fragmented character diffs. Cleaning output and current version remain unchanged.
+- Show exact per-location quantities and units (characters, spaces, markers, words and files) instead of treating report rows as correction counts; add one-based stage-local Unicode character positions.
+- Make all HTML sections collapsible except the always-visible Summary. Preserve offline operation, highlight exact edits and explicitly disclose large combined regions whose counts are unavailable.
+
+## 0.2.10 - 2026-10-05
+
+### Fixed
+
+- Repair missing spaces after single Urdu full stops and Arabic commas between
+  word characters during USFM and project cleaning, independent of NT/OT book.
+- Normalize repeated inline ordinary spaces and preserve separation when
+  replacing nonbreaking spaces. DOCX standardization rules are unchanged.
+
+### Added
+
+- Offline, escaped, RTL-friendly HTML companion cleaner report with confirmed
+  spacing repair excerpts and unchanged repeated Urdu punctuation review flags.
+- Keep existing TXT reports and expose the HTML path in the activity log.
+- Add NT/OT, footnote, protected punctuation, idempotence and report regressions.
+
+### Urdu project whole-word normalization
+
+- For projects explicitly identified as ur or urd, normalize only approved whole words: ہے → ہَے, ہیں → ہَیں, لئے → لیے, لیکن → لیکِن, تم → تُم.
+- Record each replacement in offline TXT and HTML reports; distinguish spelling from diacritic normalization.
+- Preserve already marked words, embedded word fragments, non-Urdu projects and project metadata. Standalone USFM receives no language inference.
+
+- Expanded the approved Urdu-only whole-word list with 12 user-specified mappings: تجھ → تُجھ, تجھے → تُجھے, مجھ → مُجھ, مجھے → مُجھے, خدا → خُدا, خداوند → خُداوَند, قربانی → قُربانی, جس → جِس, جسے → جِسے, تمہیں → تُمھیں, تمہارے → تُمھارے, تمہاری → تُمھاری.
+
+### Reporting
+
+- Record before/after edit spans at existing cleaning stages instead of reconstructing spacing findings from final text.
+- Itemize full-stop/comma/parenthesis/quote spacing, quote normalization, verse-marker cleanup, Unicode/control removal and file-level metadata cleanup in offline TXT/HTML reports.
+- Keep approved Urdu whole-word occurrence counts separate from stage edit spans and legacy normalization-pass counters.
+- Show only applied language-specific changes in the Activity log and use a concise Findings summary.
+- Separate fixed changes, detected-but-unchanged repeated punctuation and checks not performed; identify footnotes and stage-local locations.
+- Preserve cleaner call order and outputs; large unsplittable audit regions are explicitly labeled as combined edits.
+- Stable UIS and BTTW code remain unchanged; reports use no network resources.
+
+- Cleaner-only metadata alignment: outer and inner manifests now stamp ts-desktop build 1074, matching the verified DOCX Import source and installed application. DOCX conversion packaging remains unchanged.
+
 ## 0.2.9 - 2026-09-30
 
 ### Fixed
